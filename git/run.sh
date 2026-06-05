@@ -1100,8 +1100,46 @@ find_angular_dist_dir() {
 # Menú Angular - Opción 1. Detener Aplicación
 # ==============================================================================
 ensure_angular_runtime() {
+  if [[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" || -s "$HOME/.nvm/nvm.sh" || -s "/root/.nvm/nvm.sh" ]]; then
+    return 0
+  fi
+
   ensure_command node nodejs
   ensure_command npm npm
+}
+
+run_node_cmd() {
+  local project_dir="$1"
+  local command="$2"
+
+  run_cmd bash -lc "
+    set -Eeuo pipefail
+    export NVM_DIR=\"\${NVM_DIR:-\$HOME/.nvm}\"
+    if [[ -s \"\$NVM_DIR/nvm.sh\" ]]; then
+      source \"\$NVM_DIR/nvm.sh\"
+    elif [[ -s \"/root/.nvm/nvm.sh\" ]]; then
+      export NVM_DIR=\"/root/.nvm\"
+      source \"\$NVM_DIR/nvm.sh\"
+    elif [[ -s \"/home/\$(whoami)/.nvm/nvm.sh\" ]]; then
+      export NVM_DIR=\"/home/\$(whoami)/.nvm\"
+      source \"\$NVM_DIR/nvm.sh\"
+    fi
+
+    cd '$project_dir'
+
+    if command -v nvm >/dev/null 2>&1; then
+      if [[ -f .nvmrc ]]; then
+        nvm install
+        nvm use
+      else
+        nvm use default >/dev/null 2>&1 || true
+      fi
+    fi
+
+    echo \"Node: \$(command -v node) \$(node --version)\"
+    echo \"NPM : \$(command -v npm) \$(npm --version)\"
+    $command
+  "
 }
 
 angular_stop_app() {
@@ -1135,9 +1173,9 @@ angular_install_dependencies() {
   ensure_angular_runtime
 
   if [[ -f "$SELECTED_PROJECT/package-lock.json" ]]; then
-    run_cmd bash -lc "cd '$SELECTED_PROJECT' && npm ci"
+    run_node_cmd "$SELECTED_PROJECT" "npm ci"
   else
-    run_cmd bash -lc "cd '$SELECTED_PROJECT' && npm install"
+    run_node_cmd "$SELECTED_PROJECT" "npm install"
   fi
 }
 
@@ -1155,7 +1193,7 @@ angular_generate_build() {
     return 1
   fi
 
-  run_cmd bash -lc "cd '$SELECTED_PROJECT' && node node_modules/@angular/cli/bin/ng build -c=$ANGULAR_CONFIG"
+  run_node_cmd "$SELECTED_PROJECT" "node node_modules/@angular/cli/bin/ng build -c=$ANGULAR_CONFIG"
 }
 
 # ==============================================================================
@@ -1219,16 +1257,16 @@ angular_continuous_flow() {
   ensure_angular_runtime
   if [[ ! -d "$SELECTED_PROJECT/node_modules" ]]; then
     if [[ -f "$SELECTED_PROJECT/package-lock.json" ]]; then
-      run_cmd bash -lc "cd '$SELECTED_PROJECT' && npm ci"
+      run_node_cmd "$SELECTED_PROJECT" "npm ci"
     else
-      run_cmd bash -lc "cd '$SELECTED_PROJECT' && npm install"
+      run_node_cmd "$SELECTED_PROJECT" "npm install"
     fi
   else
     echo "node_modules ya existe. Se omite npm install/npm ci."
   fi
 
   echo "4. Generando compilado Angular..."
-  run_cmd bash -lc "cd '$SELECTED_PROJECT' && node node_modules/@angular/cli/bin/ng build -c=$ANGULAR_CONFIG"
+  run_node_cmd "$SELECTED_PROJECT" "node node_modules/@angular/cli/bin/ng build -c=$ANGULAR_CONFIG"
 
   echo "5. Publicando compilado..."
   dist_dir="$(find_angular_dist_dir "$SELECTED_PROJECT" || true)"

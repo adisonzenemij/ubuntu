@@ -2,10 +2,10 @@
 set -Eeuo pipefail
 
 # ============================================================
-# Script: Servicio Nginx
+# Script: Servicio Apache
 # Objetivo:
-#   Administrar el servicio Nginx desde un menú interactivo.
-#   Cada bloque está documentado con la opción del menú a la que pertenece.
+#   Administrar Apache2 desde un menu interactivo en Ubuntu.
+#   Sigue la misma logica general del script de Nginx.
 # ============================================================
 
 SUDO_CMD=""
@@ -13,19 +13,20 @@ if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
   SUDO_CMD="sudo"
 fi
 
-SERVICE_NAME="nginx"
-PACKAGE_NAME="nginx"
+SERVICE_NAME="apache2"
+PACKAGE_NAME="apache2"
 DEFAULT_PORT="80"
-CONFIG_FILE="/etc/nginx/sites-available/default"
+PORTS_FILE="/etc/apache2/ports.conf"
+VHOST_FILE="/etc/apache2/sites-available/000-default.conf"
 
-MENU_1="Instalación Servicio"
-MENU_2="Desinstalar Servicio"
+MENU_1="Instalacion Servicio"
+MENU_2="Desintalar Servicio"
 MENU_3="Consultar Estado"
 MENU_4="Iniciar Servicio"
 MENU_5="Detener Servicio"
 MENU_6="Reiniciar Servicio"
-MENU_7="Habilitar Inicio Automático"
-MENU_8="Inactivar Inicio Automático"
+MENU_7="Habilitar Inicio Automatico"
+MENU_8="Inactivar Inicio Automatico"
 MENU_9="Consultar Version"
 MENU_10="Configurar Puerto"
 MENU_11="Configurar Firewall"
@@ -49,9 +50,9 @@ ask_yes_no() {
   while true; do
     read -r -p "$question (S/N - Y/N): " answer
     case "${answer,,}" in
-      s|si|sí|y|yes) return 0 ;;
+      s|si|y|yes) return 0 ;;
       n|no) return 1 ;;
-      *) echo "Respuesta no válida." ;;
+      *) echo "Respuesta no valida." ;;
     esac
   done
 }
@@ -76,14 +77,14 @@ wait_service_ok() {
   local service="$1"
 
   if $SUDO_CMD systemctl is-active --quiet "$service"; then
-    echo "El servicio $service está activo correctamente."
+    echo "El servicio $service esta activo correctamente."
     return 0
   fi
 
-  echo "El servicio $service no está activo. Estado actual:"
+  echo "El servicio $service no esta activo. Estado actual:"
   $SUDO_CMD systemctl --no-pager status "$service" || true
   echo
-  echo "Últimos logs:"
+  echo "Ultimos logs:"
   $SUDO_CMD journalctl -u "$service" -n 40 --no-pager || true
   return 1
 }
@@ -94,10 +95,12 @@ print_header() {
   echo "----- ${option_number}. ${option_title} -----"
 }
 
+apache_configtest() {
+  run_cmd $SUDO_CMD apache2ctl configtest
+}
+
 # ============================================================
-# MENÚ 1: Instalación Servicio
-# Instala paquetes, habilita el arranque automático,
-# inicia el servicio y muestra una validación básica.
+# MENU 1: Instalacion Servicio
 # ============================================================
 install_service_flow() {
   print_header "1" "$MENU_1"
@@ -105,7 +108,8 @@ install_service_flow() {
   run_cmd $SUDO_CMD apt update -y
   run_cmd $SUDO_CMD apt install "$PACKAGE_NAME" -y
 
-  run_cmd nginx -v || true
+  run_cmd apache2 -v || true
+  apache_configtest || true
 
   run_cmd $SUDO_CMD systemctl enable --now "$SERVICE_NAME"
   run_cmd $SUDO_CMD systemctl is-enabled "$SERVICE_NAME" || true
@@ -113,19 +117,17 @@ install_service_flow() {
   $SUDO_CMD systemctl --no-pager status "$SERVICE_NAME" || true
 
   echo
-  echo "Instalación del servicio Nginx finalizada."
+  echo "Instalacion del servicio Apache finalizada."
 }
 
 # ============================================================
-# MENÚ 2: Consultar Estado
-# Consulta si el servicio está activo, habilitado y muestra
-# el estado completo con systemctl status.
+# MENU 2: Desintalar Servicio
 # ============================================================
 uninstall_service_flow() {
   print_header "2" "$MENU_2"
 
-  if ! ask_yes_no "Â¿Confirmas desinstalar Nginx y purgar sus paquetes?"; then
-    echo "OperaciÃ³n cancelada."
+  if ! ask_yes_no "Confirmas desinstalar Apache2 y purgar sus paquetes?"; then
+    echo "Operacion cancelada."
     return 0
   fi
 
@@ -135,9 +137,12 @@ uninstall_service_flow() {
   run_cmd $SUDO_CMD apt autoremove -y
   run_cmd $SUDO_CMD systemctl daemon-reload
 
-  echo "DesinstalaciÃ³n de Nginx finalizada."
+  echo "Desinstalacion de Apache finalizada."
 }
 
+# ============================================================
+# MENU 3: Consultar Estado
+# ============================================================
 check_service_status() {
   print_header "3" "$MENU_3"
 
@@ -151,8 +156,7 @@ check_service_status() {
 }
 
 # ============================================================
-# MENÚ 3: Iniciar Servicio
-# Inicia el servicio y valida que quede activo.
+# MENU 4: Iniciar Servicio
 # ============================================================
 start_service() {
   print_header "4" "$MENU_4"
@@ -162,34 +166,32 @@ start_service() {
 }
 
 # ============================================================
-# MENÚ 4: Detener Servicio
-# Detiene el servicio y muestra el estado posterior.
+# MENU 5: Detener Servicio
 # ============================================================
 stop_service() {
   print_header "5" "$MENU_5"
 
-  if ask_yes_no "¿Confirmas detener el servicio $SERVICE_NAME?"; then
+  if ask_yes_no "Confirmas detener el servicio $SERVICE_NAME?"; then
     run_cmd $SUDO_CMD systemctl stop "$SERVICE_NAME"
     run_cmd $SUDO_CMD systemctl is-active "$SERVICE_NAME" || true
   else
-    echo "Operación cancelada."
+    echo "Operacion cancelada."
   fi
 }
 
 # ============================================================
-# MENÚ 5: Reiniciar Servicio
-# Reinicia el servicio y valida que quede activo.
+# MENU 6: Reiniciar Servicio
 # ============================================================
 restart_service() {
   print_header "6" "$MENU_6"
 
+  apache_configtest
   run_cmd $SUDO_CMD systemctl restart "$SERVICE_NAME"
   wait_service_ok "$SERVICE_NAME" || true
 }
 
 # ============================================================
-# MENÚ 6: Habilitar Inicio Automático
-# Habilita el servicio para iniciar con el sistema operativo.
+# MENU 7: Habilitar Inicio Automatico
 # ============================================================
 enable_service() {
   print_header "7" "$MENU_7"
@@ -199,50 +201,53 @@ enable_service() {
 }
 
 # ============================================================
-# MENÚ 7: Inactivar Inicio Automático
-# Deshabilita el arranque automático del servicio.
-# No elimina ni detiene el servicio.
+# MENU 8: Inactivar Inicio Automatico
 # ============================================================
 disable_service() {
   print_header "8" "$MENU_8"
 
-  if ask_yes_no "¿Confirmas deshabilitar el inicio automático de $SERVICE_NAME?"; then
+  if ask_yes_no "Confirmas deshabilitar el inicio automatico de $SERVICE_NAME?"; then
     run_cmd $SUDO_CMD systemctl disable "$SERVICE_NAME"
     run_cmd $SUDO_CMD systemctl is-enabled "$SERVICE_NAME" || true
   else
-    echo "Operación cancelada."
+    echo "Operacion cancelada."
   fi
 }
 
 # ============================================================
-# MENÚ 8: Consultar Versión
-# Muestra la versión instalada del servicio o herramienta.
+# MENU 9: Consultar Version
 # ============================================================
 check_service_version() {
   print_header "9" "$MENU_9"
 
-  run_cmd nginx -v || true
+  run_cmd apache2 -v || true
+  run_cmd apache2ctl -v || true
 }
 
 # ============================================================
-# MENÚ 9: Configurar Puerto
-# Realiza copia de seguridad del archivo de configuración,
-# cambia el puerto del servicio, valida la configuración
-# y reinicia el servicio si corresponde.
+# MENU 10: Configurar Puerto
 # ============================================================
 configure_service_port() {
   print_header "10" "$MENU_10"
 
   local new_port
-  local backup_file
+  local ports_backup
+  local vhost_backup
 
-  echo "Archivo de configuración: $CONFIG_FILE"
-  echo "Puerto por defecto: $DEFAULT_PORT"
+  echo "Archivo de puertos : $PORTS_FILE"
+  echo "VirtualHost base   : $VHOST_FILE"
+  echo "Puerto por defecto : $DEFAULT_PORT"
   echo
 
-  if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo "ERROR: No existe el archivo de configuración: $CONFIG_FILE"
-    echo "Instala primero el servicio desde la opción 1."
+  if [[ ! -f "$PORTS_FILE" ]]; then
+    echo "ERROR: No existe el archivo de configuracion: $PORTS_FILE"
+    echo "Instala primero el servicio desde la opcion 1."
+    return 1
+  fi
+
+  if [[ ! -f "$VHOST_FILE" ]]; then
+    echo "ERROR: No existe el archivo VirtualHost: $VHOST_FILE"
+    echo "Instala primero el servicio desde la opcion 1."
     return 1
   fi
 
@@ -251,28 +256,38 @@ configure_service_port() {
     if valid_port "$new_port"; then
       break
     fi
-    echo "Puerto inválido. Debe estar entre 1 y 65535."
+    echo "Puerto invalido. Debe estar entre 1 y 65535."
   done
 
-  if ! ask_yes_no "¿Confirmas configurar el puerto $new_port para Nginx?"; then
-    echo "Operación cancelada."
+  if ! ask_yes_no "Confirmas configurar el puerto $new_port para Apache?"; then
+    echo "Operacion cancelada."
     return 0
   fi
 
-  backup_file="${CONFIG_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
-  run_cmd $SUDO_CMD cp "$CONFIG_FILE" "$backup_file"
-  echo "Copia de seguridad creada en: $backup_file"
+  ports_backup="${PORTS_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+  vhost_backup="${VHOST_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+  run_cmd $SUDO_CMD cp "$PORTS_FILE" "$ports_backup"
+  run_cmd $SUDO_CMD cp "$VHOST_FILE" "$vhost_backup"
+  echo "Copias de seguridad:"
+  echo "- $ports_backup"
+  echo "- $vhost_backup"
 
   run_cmd $SUDO_CMD sed -i -E \
-    "s/listen[[:space:]]+[0-9]+([[:space:]]+default_server)?;/listen ${new_port}\1;/g; s/listen[[:space:]]+\[::\]:[0-9]+([[:space:]]+default_server)?;/listen [::]:${new_port}\1;/g" \
-    "$CONFIG_FILE"
+    "s/^[[:space:]]*Listen[[:space:]]+[0-9]+/Listen ${new_port}/g" \
+    "$PORTS_FILE"
 
-  if ! $SUDO_CMD nginx -t; then
-    echo "La configuración Nginx tiene errores. Se abre nano para corregir."
-    $SUDO_CMD nano "$CONFIG_FILE"
-    until $SUDO_CMD nginx -t; do
-      echo "Aún existen errores en $CONFIG_FILE. Corrige antes de continuar."
-      $SUDO_CMD nano "$CONFIG_FILE"
+  run_cmd $SUDO_CMD sed -i -E \
+    "s/<VirtualHost[[:space:]]+\\*:[0-9]+>/<VirtualHost *:${new_port}>/g" \
+    "$VHOST_FILE"
+
+  if ! $SUDO_CMD apache2ctl configtest; then
+    echo "La configuracion Apache tiene errores. Se abre nano para corregir."
+    $SUDO_CMD nano "$PORTS_FILE"
+    $SUDO_CMD nano "$VHOST_FILE"
+    until $SUDO_CMD apache2ctl configtest; do
+      echo "Aun existen errores. Corrige antes de continuar."
+      $SUDO_CMD nano "$PORTS_FILE"
+      $SUDO_CMD nano "$VHOST_FILE"
     done
   fi
 
@@ -283,8 +298,7 @@ configure_service_port() {
 }
 
 # ============================================================
-# MENÚ 10: Configurar Firewall
-# Si UFW está activo, abre el puerto indicado para el servicio.
+# MENU 11: Configurar Firewall
 # ============================================================
 configure_firewall() {
   print_header "11" "$MENU_11"
@@ -295,7 +309,7 @@ configure_firewall() {
   port="${port:-$DEFAULT_PORT}"
 
   if ! valid_port "$port"; then
-    echo "ERROR: Puerto inválido."
+    echo "ERROR: Puerto invalido."
     return 1
   fi
 
@@ -309,38 +323,45 @@ configure_firewall() {
 }
 
 # ============================================================
-# MENÚ 11: Consultar Logs
-# Muestra los últimos registros del servicio usando journalctl.
+# MENU 12: Consultar Logs
 # ============================================================
 check_service_logs() {
   print_header "12" "$MENU_12"
 
   local lines
 
-  read -r -p "Cantidad de líneas a consultar [80]: " lines
+  read -r -p "Cantidad de lineas a consultar [80]: " lines
   lines="${lines:-80}"
 
   if ! [[ "$lines" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: Debes ingresar un número válido."
+    echo "ERROR: Debes ingresar un numero valido."
     return 1
   fi
 
+  echo "Logs systemd:"
   run_cmd $SUDO_CMD journalctl -u "$SERVICE_NAME" -n "$lines" --no-pager
+  echo
+  echo "Logs Apache:"
+  run_cmd $SUDO_CMD tail -n "$lines" /var/log/apache2/error.log || true
+  run_cmd $SUDO_CMD tail -n "$lines" /var/log/apache2/access.log || true
 }
 
+# ============================================================
+# MENU 13: Validar Configuracion
+# ============================================================
 validate_service_config() {
   print_header "13" "$MENU_13"
 
-  run_cmd $SUDO_CMD nginx -t
+  apache_configtest
   echo
-  echo "ConfiguraciÃ³n activa:"
-  run_cmd $SUDO_CMD nginx -T || true
+  echo "Sitios habilitados:"
+  run_cmd $SUDO_CMD apache2ctl -S || true
 }
 
 show_menu() {
   clear || true
   echo "=============================================="
-  echo "        MENÚ SERVICIO NGINX - UBUNTU"
+  echo "        MENU SERVICIO APACHE - UBUNTU"
   echo "=============================================="
   echo "Usuario actual : $(whoami)"
   echo "Servicio       : $SERVICE_NAME"
@@ -369,7 +390,7 @@ main() {
 
   while true; do
     show_menu
-    read -r -p "Seleccione una opción: " option
+    read -r -p "Seleccione una opcion: " option
     echo
 
     case "$option" in
@@ -386,8 +407,8 @@ main() {
       11) configure_firewall; pause_menu ;;
       12) check_service_logs; pause_menu ;;
       13) validate_service_config; pause_menu ;;
-      0) echo "Saliendo del menú del servicio Nginx."; exit 0 ;;
-      *) echo "Opción no válida."; pause_menu ;;
+      0) echo "Saliendo del menu del servicio Apache."; exit 0 ;;
+      *) echo "Opcion no valida."; pause_menu ;;
     esac
   done
 }
