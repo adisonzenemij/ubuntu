@@ -262,12 +262,12 @@ show_directory() {
 }
 
 # ==============================================================================
-# Menú Principal - Opción 3. Listar Proyectos Descargados
+# Menú Principal - Opción 3. Proyectos Descargados
 # ==============================================================================
 list_downloaded_projects() {
   ensure_git_dir || return 1
 
-  echo "----- 3. Listar Proyectos Descargados -----"
+  echo "----- 3. Proyectos Descargados -----"
   echo "Directorio configurado: $GIT_DIR"
   echo
 
@@ -368,11 +368,65 @@ pull_project_changes() {
   echo "Proyecto seleccionado: $SELECTED_PROJECT_NAME"
   run_cmd git -C "$SELECTED_PROJECT" status --short
   run_cmd git -C "$SELECTED_PROJECT" pull
-  run_cmd $SUDO_CMD chown -R "$APP_USER:$APP_USER" "$SELECTED_PROJECT"
+  apply_git_directory_permissions "$SELECTED_PROJECT"
 }
 
 # ==============================================================================
-# Menú Principal - Opción 7. Cambiar Branch
+# Menú Principal - Opción 7. Estado del Repo
+# ==============================================================================
+show_project_git_status() {
+  echo "----- 7. Estado del Repo -----"
+  select_project || return 1
+
+  if [[ ! -d "$SELECTED_PROJECT/.git" ]]; then
+    echo "ERROR: El proyecto seleccionado no parece ser un repositorio Git."
+    return 1
+  fi
+
+  echo "Proyecto seleccionado: $SELECTED_PROJECT_NAME"
+  echo "Ruta               : $SELECTED_PROJECT"
+  echo
+  run_cmd git -C "$SELECTED_PROJECT" status
+}
+
+# ==============================================================================
+# Menú Principal - Opción 8. Branch Local
+# ==============================================================================
+show_project_local_branch() {
+  echo "----- 8. Branch Local -----"
+  select_project || return 1
+
+  if [[ ! -d "$SELECTED_PROJECT/.git" ]]; then
+    echo "ERROR: El proyecto seleccionado no parece ser un repositorio Git."
+    return 1
+  fi
+
+  echo "Proyecto seleccionado: $SELECTED_PROJECT_NAME"
+  echo "Ruta               : $SELECTED_PROJECT"
+  echo
+  run_cmd git -C "$SELECTED_PROJECT" branch
+}
+
+# ==============================================================================
+# Menú Principal - Opción 9. Consultar Branch
+# ==============================================================================
+show_project_remote_branches() {
+  echo "----- 9. Consultar Branch -----"
+  select_project || return 1
+
+  if [[ ! -d "$SELECTED_PROJECT/.git" ]]; then
+    echo "ERROR: El proyecto seleccionado no parece ser un repositorio Git."
+    return 1
+  fi
+
+  echo "Proyecto seleccionado: $SELECTED_PROJECT_NAME"
+  echo "Ruta               : $SELECTED_PROJECT"
+  echo
+  run_cmd git -C "$SELECTED_PROJECT" branch -r
+}
+
+# ==============================================================================
+# Menú Principal - Opción 10. Cambiar Branch
 # ==============================================================================
 select_project_branch() {
   local project_dir="$1"
@@ -472,7 +526,7 @@ switch_to_selected_branch() {
 }
 
 change_project_branch() {
-  echo "----- 7. Cambiar Branch -----"
+  echo "----- 10. Cambiar Branch -----"
   select_project || return 1
 
   if [[ ! -d "$SELECTED_PROJECT/.git" ]]; then
@@ -504,7 +558,7 @@ change_project_branch() {
   echo "Branch seleccionado: $SELECTED_BRANCH_REF"
 
   switch_to_selected_branch "$SELECTED_PROJECT" "$SELECTED_BRANCH_REF" "$SELECTED_BRANCH_TYPE"
-  run_cmd $SUDO_CMD chown -R "$APP_USER:$APP_USER" "$SELECTED_PROJECT"
+  apply_git_directory_permissions "$SELECTED_PROJECT"
 
   echo
   echo "Estado actual del repositorio:"
@@ -1124,7 +1178,7 @@ angular_deploy_menu() {
 
 
 # ==============================================================================
-# Menú Principal - Opción 8. Volver a Commit Anterior
+# Menú Principal - Opción 11. Commit Rollback
 # ==============================================================================
 select_recent_commit() {
   local project_dir="$1"
@@ -1171,7 +1225,7 @@ select_recent_commit() {
 }
 
 rollback_project_commit() {
-  echo "----- 8. Volver a Commit Anterior -----"
+  echo "----- 11. Commit Rollback -----"
   select_project || return 1
 
   if [[ ! -d "$SELECTED_PROJECT/.git" ]]; then
@@ -1236,7 +1290,7 @@ rollback_project_commit() {
 
   if ask_yes_no "¿Confirmas volver a este commit con git checkout?"; then
     run_cmd git -C "$SELECTED_PROJECT" checkout "$ROLLBACK_COMMIT"
-    run_cmd $SUDO_CMD chown -R "$APP_USER:$APP_USER" "$SELECTED_PROJECT"
+    apply_git_directory_permissions "$SELECTED_PROJECT"
     echo
     echo "Estado actual del repositorio:"
     run_cmd git -C "$SELECTED_PROJECT" status -sb
@@ -1253,14 +1307,14 @@ rollback_project_commit() {
 }
 
 # ==============================================================================
-# Menú Principal - Opción 9. Desplegar Proyectos
+# Menú Principal - Opción 12. Desplegar Proyectos
 # ==============================================================================
 deploy_projects_menu() {
   local option
   while true; do
     clear || true
     echo "=============================================="
-    echo "        9. Desplegar Proyectos"
+    echo "        12. Desplegar Proyectos"
     echo "=============================================="
     echo "1. Caso Python"
     echo "2. Caso Angular"
@@ -1294,13 +1348,16 @@ show_main_menu() {
   echo "=============================================="
   echo "1. Configurar Directorio"
   echo "2. Visualizar Directorio"
-  echo "3. Listar Proyectos Descargados"
+  echo "3. Proyectos Descargados"
   echo "4. Descargar Proyecto"
   echo "5. Eliminar Proyectos"
   echo "6. Descargar Cambios"
-  echo "7. Cambiar Branch"
-  echo "8. Volver a Commit Anterior"
-  echo "9. Desplegar Proyectos"
+  echo "7. Estado del Repo"
+  echo "8. Branch Local"
+  echo "9. Consultar Branch"
+  echo "10. Cambiar Branch"
+  echo "11. Commit Rollback"
+  echo "12. Desplegar Proyectos"
   echo "0. Salir"
   echo "=============================================="
 }
@@ -1321,9 +1378,12 @@ main() {
       4) download_project; pause_menu ;;
       5) delete_project; pause_menu ;;
       6) pull_project_changes; pause_menu ;;
-      7) change_project_branch; pause_menu ;;
-      8) rollback_project_commit; pause_menu ;;
-      9) deploy_projects_menu ;;
+      7) show_project_git_status; pause_menu ;;
+      8) show_project_local_branch; pause_menu ;;
+      9) show_project_remote_branches; pause_menu ;;
+      10) change_project_branch; pause_menu ;;
+      11) rollback_project_commit; pause_menu ;;
+      12) deploy_projects_menu ;;
       0) echo "Saliendo del menú Git + Despliegue."; exit 0 ;;
       *) echo "Opción no válida."; pause_menu ;;
     esac
