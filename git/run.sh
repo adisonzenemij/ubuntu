@@ -102,6 +102,13 @@ ensure_command() {
   fi
 }
 
+apply_git_directory_permissions() {
+  local target_dir="$1"
+
+  run_cmd $SUDO_CMD chown -R "$APP_USER:$APP_USER" "$target_dir"
+  run_cmd $SUDO_CMD chmod -R ug+rwX,o+rX "$target_dir"
+}
+
 select_project() {
   ensure_git_dir || return 1
 
@@ -223,8 +230,7 @@ configure_directory() {
   echo
   echo "Creando directorio: $GIT_DIR"
   run_cmd $SUDO_CMD mkdir -p "$GIT_DIR"
-  run_cmd $SUDO_CMD chown -R "$APP_USER:$APP_USER" "$GIT_DIR"
-  run_cmd $SUDO_CMD chmod -R 775 "$GIT_DIR"
+  apply_git_directory_permissions "$GIT_DIR"
 
   save_config
 
@@ -326,8 +332,7 @@ download_project() {
     run_cmd git -C "$GIT_DIR" clone "$repo_url"
   fi
 
-  run_cmd $SUDO_CMD chown -R "$APP_USER:$APP_USER" "$GIT_DIR"
-  run_cmd $SUDO_CMD chmod -R 775 "$GIT_DIR"
+  apply_git_directory_permissions "$GIT_DIR"
   echo "Proyecto descargado y permisos aplicados."
 }
 
