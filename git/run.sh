@@ -859,6 +859,82 @@ EOF_SERVICE
 # ==============================================================================
 # Submenú Python
 # ==============================================================================
+python_show_systemd_symlink() {
+  echo "----- Python - Consultar Enlace Simbólico -----"
+  select_project || return 1
+
+  local service_name
+  local service_file
+  local wants_link
+  service_name="$(python_service_name "$SELECTED_PROJECT_NAME")"
+  service_file="/etc/systemd/system/${service_name}.service"
+  wants_link="/etc/systemd/system/multi-user.target.wants/${service_name}.service"
+
+  echo "Proyecto seleccionado : $SELECTED_PROJECT_NAME"
+  echo "Servicio              : $service_name"
+  echo "Archivo servicio      : $service_file"
+  echo "Enlace simbólico      : $wants_link"
+  echo
+
+  if [[ -L "$wants_link" ]]; then
+    run_cmd ls -l "$wants_link"
+  else
+    echo "No existe enlace simbólico de inicio automático para: $service_name"
+  fi
+
+  echo
+  run_cmd systemctl is-enabled "$service_name" || true
+}
+
+python_delete_systemd_symlink() {
+  echo "----- Python - Eliminar Enlace Simbólico -----"
+  select_project || return 1
+
+  local service_name
+  local wants_link
+  service_name="$(python_service_name "$SELECTED_PROJECT_NAME")"
+  wants_link="/etc/systemd/system/multi-user.target.wants/${service_name}.service"
+
+  echo "Proyecto seleccionado : $SELECTED_PROJECT_NAME"
+  echo "Servicio              : $service_name"
+  echo "Enlace simbólico      : $wants_link"
+  echo
+
+  if ! ask_yes_no "¿Confirmas eliminar/deshabilitar el enlace simbólico de inicio automático?"; then
+    echo "Operación cancelada."
+    return 0
+  fi
+
+  run_cmd $SUDO_CMD systemctl disable "$service_name" || true
+  if [[ -L "$wants_link" ]]; then
+    run_cmd $SUDO_CMD rm -f "$wants_link"
+  fi
+  run_cmd $SUDO_CMD systemctl daemon-reload
+
+  echo "Enlace simbólico eliminado o deshabilitado para: $service_name"
+}
+
+python_show_deployed_service() {
+  echo "----- Python - Consultar Servicio Desplegado -----"
+  select_project || return 1
+
+  local service_name
+  local service_file
+  service_name="$(python_service_name "$SELECTED_PROJECT_NAME")"
+  service_file="/etc/systemd/system/${service_name}.service"
+
+  echo "Proyecto seleccionado : $SELECTED_PROJECT_NAME"
+  echo "Servicio              : $service_name"
+  echo "Archivo servicio      : $service_file"
+  echo
+
+  if [[ -f "$service_file" ]]; then
+    run_cmd systemctl --no-pager status "$service_name" || true
+  else
+    echo "No existe archivo de servicio systemd para: $service_name"
+  fi
+}
+
 show_python_menu() {
   clear || true
   echo "=============================================="
@@ -871,6 +947,9 @@ show_python_menu() {
   echo "5. Instalar Dependencias"
   echo "6. Generar Enlace Simbólico"
   echo "7. Flujo Continuo Completo"
+  echo "8. Consultar Enlace Simbólico"
+  echo "9. Eliminar Enlace Simbólico"
+  echo "10. Consultar Servicio Desplegado"
   echo "0. Volver"
   echo "=============================================="
 }
@@ -889,6 +968,9 @@ python_deploy_menu() {
       5) python_install_dependencies; pause_menu ;;
       6) python_generate_systemd; pause_menu ;;
       7) python_continuous_flow; pause_menu ;;
+      8) python_show_systemd_symlink; pause_menu ;;
+      9) python_delete_systemd_symlink; pause_menu ;;
+      10) python_show_deployed_service; pause_menu ;;
       0) return 0 ;;
       *) echo "Opción no válida."; pause_menu ;;
     esac
@@ -1183,8 +1265,33 @@ show_angular_menu() {
   echo "5. Publicar Compilado en Servicio Web"
   echo "6. Reiniciar Servicio Web"
   echo "7. Flujo Continuo Completo"
+  echo "8. Consultar Servicio Desplegado"
   echo "0. Volver"
   echo "=============================================="
+}
+
+angular_show_deployed_service() {
+  echo "----- Angular - Consultar Servicio Desplegado -----"
+  select_project || return 1
+  select_web_service
+
+  local target_dir
+  target_dir="/var/www/html/${SELECTED_PROJECT_NAME}"
+
+  echo "Proyecto seleccionado : $SELECTED_PROJECT_NAME"
+  echo "Servicio web          : $WEB_SERVICE"
+  echo "Ruta web sugerida     : $target_dir"
+  echo
+
+  if [[ -d "$target_dir" ]]; then
+    run_cmd ls -la "$target_dir"
+    echo
+  else
+    echo "No existe la ruta web sugerida: $target_dir"
+    echo
+  fi
+
+  run_cmd systemctl --no-pager status "$WEB_SERVICE" || true
 }
 
 angular_deploy_menu() {
@@ -1201,6 +1308,7 @@ angular_deploy_menu() {
       5) angular_publish_build; pause_menu ;;
       6) angular_restart_web_service; pause_menu ;;
       7) angular_continuous_flow; pause_menu ;;
+      8) angular_show_deployed_service; pause_menu ;;
       0) return 0 ;;
       *) echo "Opción no válida."; pause_menu ;;
     esac
