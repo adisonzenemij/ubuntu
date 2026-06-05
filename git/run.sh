@@ -145,6 +145,23 @@ select_project() {
   done
 }
 
+current_project_branch() {
+  local project_dir="$1"
+
+  if [[ ! -d "$project_dir/.git" ]]; then
+    echo "no es repositorio git"
+    return 0
+  fi
+
+  local branch
+  branch="$(git -C "$project_dir" branch --show-current 2>/dev/null || true)"
+  if [[ -n "$branch" ]]; then
+    echo "$branch"
+  else
+    echo "detached HEAD"
+  fi
+}
+
 select_file_if_exists() {
   local base="$1"
   shift
@@ -239,13 +256,50 @@ show_directory() {
 }
 
 # ==============================================================================
-# Menú Principal - Opción 3. Descargar Proyecto
+# Menú Principal - Opción 3. Listar Proyectos Descargados
+# ==============================================================================
+list_downloaded_projects() {
+  ensure_git_dir || return 1
+
+  echo "----- 3. Listar Proyectos Descargados -----"
+  echo "Directorio configurado: $GIT_DIR"
+  echo
+
+  local projects=()
+  local item
+
+  shopt -s nullglob
+  for item in "$GIT_DIR"/*; do
+    [[ -d "$item" ]] && projects+=("$item")
+  done
+  shopt -u nullglob
+
+  if (( ${#projects[@]} == 0 )); then
+    echo "No existen proyectos descargados en: $GIT_DIR"
+    return 0
+  fi
+
+  local i
+  local project_name
+  local branch
+
+  for i in "${!projects[@]}"; do
+    project_name="$(basename "${projects[$i]}")"
+    branch="$(current_project_branch "${projects[$i]}")"
+    echo "$((i + 1)). $project_name"
+    echo "   Ruta   : ${projects[$i]}"
+    echo "   Branch : $branch"
+  done
+}
+
+# ==============================================================================
+# Menú Principal - Opción 4. Descargar Proyecto
 # ==============================================================================
 download_project() {
   ensure_git_dir || return 1
   ensure_command git git
 
-  echo "----- 3. Descargar Proyecto -----"
+  echo "----- 4. Descargar Proyecto -----"
   local repo_url
   local custom_name
   local target_dir
@@ -278,10 +332,10 @@ download_project() {
 }
 
 # ==============================================================================
-# Menú Principal - Opción 4. Eliminar Proyectos
+# Menú Principal - Opción 5. Eliminar Proyectos
 # ==============================================================================
 delete_project() {
-  echo "----- 4. Eliminar Proyectos -----"
+  echo "----- 5. Eliminar Proyectos -----"
   select_project || return 1
 
   echo
@@ -295,10 +349,10 @@ delete_project() {
 }
 
 # ==============================================================================
-# Menú Principal - Opción 5. Descargar Cambios
+# Menú Principal - Opción 6. Descargar Cambios
 # ==============================================================================
 pull_project_changes() {
-  echo "----- 5. Descargar Cambios -----"
+  echo "----- 6. Descargar Cambios -----"
   select_project || return 1
 
   if [[ ! -d "$SELECTED_PROJECT/.git" ]]; then
@@ -310,6 +364,150 @@ pull_project_changes() {
   run_cmd git -C "$SELECTED_PROJECT" status --short
   run_cmd git -C "$SELECTED_PROJECT" pull
   run_cmd $SUDO_CMD chown -R "$APP_USER:$APP_USER" "$SELECTED_PROJECT"
+}
+
+# ==============================================================================
+# Menú Principal - Opción 7. Cambiar Branch
+# ==============================================================================
+select_project_branch() {
+  local project_dir="$1"
+  local branches=()
+  local branch_refs=()
+  local branch_types=()
+  local branch
+  local option
+
+  while IFS= read -r branch; do
+    [[ -n "$branch" ]] || continue
+    branches+=("local: $branch")
+    branch_refs+=("$branch")
+    branch_types+=("local")
+  done < <(git -C "$project_dir" for-each-ref --format='%(refname:short)' refs/heads)
+
+  while IFS= read -r branch; do
+    [[ -n "$branch" ]] || continue
+    [[ "$branch" == */HEAD ]] && continue
+    branches+=("remoto: $branch")
+    branch_refs+=("$branch")
+    branch_types+=("remote")
+  done < <(git -C "$project_dir" for-each-ref --format='%(refname:short)' refs/remotes)
+
+  if (( ${#branches[@]} > 0 )); then
+    echo "Branches disponibles:"
+    local i
+    for i in "${!branches[@]}"; do
+      echo "$((i + 1)). ${branches[$i]}"
+    done
+    echo "M. Escribir branch manualmente"
+    echo "0. Cancelar"
+    echo
+  else
+    echo "No se encontraron branches locales o remotos."
+    echo "M. Escribir branch manualmente"
+    echo "0. Cancelar"
+    echo
+  fi
+
+  while true; do
+    read -r -p "Selecciona el branch: " option
+    case "${option,,}" in
+      0)
+        echo "Operación cancelada."
+        return 1
+        ;;
+      m)
+        read -r -p "Nombre del branch: " SELECTED_BRANCH_REF
+        SELECTED_BRANCH_REF="${SELECTED_BRANCH_REF// /}"
+        if [[ -n "$SELECTED_BRANCH_REF" ]]; then
+          SELECTED_BRANCH_TYPE="manual"
+          return 0
+        fi
+        echo "El nombre del branch no puede estar vacío."
+        ;;
+      *)
+        if [[ "$option" =~ ^[0-9]+$ ]] && (( option >= 1 && option <= ${#branches[@]} )); then
+          SELECTED_BRANCH_REF="${branch_refs[$((option - 1))]}"
+          SELECTED_BRANCH_TYPE="${branch_types[$((option - 1))]}"
+          return 0
+        fi
+        echo "Opción inválida. Selecciona un número de la lista, M o 0."
+        ;;
+    esac
+  done
+}
+
+switch_to_selected_branch() {
+  local project_dir="$1"
+  local branch_ref="$2"
+  local branch_type="$3"
+  local local_branch
+
+  if [[ "$branch_type" == "remote" ]]; then
+    local_branch="${branch_ref#*/}"
+
+    if git -C "$project_dir" show-ref --verify --quiet "refs/heads/$local_branch"; then
+      if run_cmd git -C "$project_dir" switch "$local_branch"; then
+        return 0
+      fi
+      run_cmd git -C "$project_dir" checkout "$local_branch"
+      return 0
+    fi
+
+    if run_cmd git -C "$project_dir" switch --track "$branch_ref"; then
+      return 0
+    fi
+    run_cmd git -C "$project_dir" checkout -b "$local_branch" "$branch_ref"
+    return 0
+  fi
+
+  if run_cmd git -C "$project_dir" switch "$branch_ref"; then
+    return 0
+  fi
+  run_cmd git -C "$project_dir" checkout "$branch_ref"
+}
+
+change_project_branch() {
+  echo "----- 7. Cambiar Branch -----"
+  select_project || return 1
+
+  if [[ ! -d "$SELECTED_PROJECT/.git" ]]; then
+    echo "ERROR: El proyecto seleccionado no parece ser un repositorio Git."
+    return 1
+  fi
+
+  echo "Proyecto seleccionado: $SELECTED_PROJECT_NAME"
+  echo "Ruta               : $SELECTED_PROJECT"
+  echo "Branch actual      : $(current_project_branch "$SELECTED_PROJECT")"
+  echo
+
+  if ask_yes_no "¿Deseas actualizar la lista de branches remotos con git fetch?"; then
+    run_cmd git -C "$SELECTED_PROJECT" fetch --all --prune
+  fi
+
+  if [[ -n "$(git -C "$SELECTED_PROJECT" status --porcelain)" ]]; then
+    echo
+    echo "AVISO: El proyecto tiene cambios locales sin confirmar."
+    if ! ask_yes_no "¿Deseas intentar cambiar de branch de todas formas?"; then
+      echo "Operación cancelada."
+      return 1
+    fi
+  fi
+
+  echo
+  select_project_branch "$SELECTED_PROJECT" || return 1
+  echo
+  echo "Branch seleccionado: $SELECTED_BRANCH_REF"
+
+  switch_to_selected_branch "$SELECTED_PROJECT" "$SELECTED_BRANCH_REF" "$SELECTED_BRANCH_TYPE"
+  run_cmd $SUDO_CMD chown -R "$APP_USER:$APP_USER" "$SELECTED_PROJECT"
+
+  echo
+  echo "Estado actual del repositorio:"
+  run_cmd git -C "$SELECTED_PROJECT" status -sb
+
+  if ask_yes_no "¿Deseas descargar los últimos cambios del branch actual con git pull?"; then
+    run_cmd git -C "$SELECTED_PROJECT" pull
+  fi
 }
 
 # ==============================================================================
@@ -921,7 +1119,7 @@ angular_deploy_menu() {
 
 
 # ==============================================================================
-# Menú Principal - Opción 6. Volver a Commit Anterior
+# Menú Principal - Opción 8. Volver a Commit Anterior
 # ==============================================================================
 select_recent_commit() {
   local project_dir="$1"
@@ -968,7 +1166,7 @@ select_recent_commit() {
 }
 
 rollback_project_commit() {
-  echo "----- 6. Volver a Commit Anterior -----"
+  echo "----- 8. Volver a Commit Anterior -----"
   select_project || return 1
 
   if [[ ! -d "$SELECTED_PROJECT/.git" ]]; then
@@ -1050,14 +1248,14 @@ rollback_project_commit() {
 }
 
 # ==============================================================================
-# Menú Principal - Opción 7. Desplegar Proyectos
+# Menú Principal - Opción 9. Desplegar Proyectos
 # ==============================================================================
 deploy_projects_menu() {
   local option
   while true; do
     clear || true
     echo "=============================================="
-    echo "        7. Desplegar Proyectos"
+    echo "        9. Desplegar Proyectos"
     echo "=============================================="
     echo "1. Caso Python"
     echo "2. Caso Angular"
@@ -1091,11 +1289,13 @@ show_main_menu() {
   echo "=============================================="
   echo "1. Configurar Directorio"
   echo "2. Visualizar Directorio"
-  echo "3. Descargar Proyecto"
-  echo "4. Eliminar Proyectos"
-  echo "5. Descargar Cambios"
-  echo "6. Volver a Commit Anterior"
-  echo "7. Desplegar Proyectos"
+  echo "3. Listar Proyectos Descargados"
+  echo "4. Descargar Proyecto"
+  echo "5. Eliminar Proyectos"
+  echo "6. Descargar Cambios"
+  echo "7. Cambiar Branch"
+  echo "8. Volver a Commit Anterior"
+  echo "9. Desplegar Proyectos"
   echo "0. Salir"
   echo "=============================================="
 }
@@ -1112,11 +1312,13 @@ main() {
     case "$option" in
       1) configure_directory; pause_menu ;;
       2) show_directory; pause_menu ;;
-      3) download_project; pause_menu ;;
-      4) delete_project; pause_menu ;;
-      5) pull_project_changes; pause_menu ;;
-      6) rollback_project_commit; pause_menu ;;
-      7) deploy_projects_menu ;;
+      3) list_downloaded_projects; pause_menu ;;
+      4) download_project; pause_menu ;;
+      5) delete_project; pause_menu ;;
+      6) pull_project_changes; pause_menu ;;
+      7) change_project_branch; pause_menu ;;
+      8) rollback_project_commit; pause_menu ;;
+      9) deploy_projects_menu ;;
       0) echo "Saliendo del menú Git + Despliegue."; exit 0 ;;
       *) echo "Opción no válida."; pause_menu ;;
     esac

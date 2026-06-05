@@ -94,9 +94,9 @@ folder_menu() {
 show_main_menu() {
   show_header "MENU PRINCIPAL UBUNTU"
   echo "1. Defecto"
-  echo "2. Git"
+  echo "2. Servicios"
   echo "3. Librerias"
-  echo "4. Servicios"
+  echo "4. Git"
   echo "0. Salir"
   echo "=============================================="
 }
@@ -111,9 +111,9 @@ main() {
 
     case "$option" in
       1) folder_menu "SUBMENU DEFECTO" "default" ;;
-      2) folder_menu "SUBMENU GIT" "git" ;;
+      2) folder_menu "SUBMENU SERVICIOS" "service" ;;
       3) folder_menu "SUBMENU LIBRERIAS" "library" ;;
-      4) folder_menu "SUBMENU SERVICIOS" "service" ;;
+      4) folder_menu "SUBMENU GIT" "git" ;;
       0) echo "Saliendo del menu principal."; exit 0 ;;
       *) echo "Opcion no valida."; pause_menu ;;
     esac
