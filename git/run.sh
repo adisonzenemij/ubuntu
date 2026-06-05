@@ -645,7 +645,7 @@ build_python_exec_command() {
     fastapi)
       read -r -p "Módulo FastAPI [main:app]: " module_app
       module_app="${module_app:-main:app}"
-      PY_EXEC_CMD="$project_dir/.venv/bin/uvicorn $module_app --host 0.0.0.0 --port $port"
+      PY_EXEC_CMD="$project_dir/.venv/bin/python -m uvicorn $module_app --host 0.0.0.0 --port $port"
       ;;
     django)
       PY_EXEC_CMD="$project_dir/.venv/bin/python manage.py runserver 0.0.0.0:$port"
