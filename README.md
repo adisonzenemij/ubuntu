@@ -5,25 +5,39 @@ Este paquete contiene scripts independientes para preparar un servidor Ubuntu en
 ## Orden sugerido de ejecución
 
 ```bash
-chmod +x *.sh
-./ubuntu.sh
-./srvc_ssh.sh
-./srvc_mysql.sh
-./srvc_nginx.sh
-./lib_git.sh
-./lib_pyenv.sh
-./lib_nvm.sh
+# Dar permisos de ejecución a todos los scripts
+chmod +x default/*.sh library/*.sh service/*.sh
+
+# 1. Configuración base del sistema y firewall
+./default/system.sh
+./default/firewall.sh
+
+# 2. Servicios esenciales
+./service/srvc_ssh.sh
+./service/srvc_mysql.sh
+./service/srvc_nginx.sh
+
+# 3. Librerías y entornos de desarrollo
+./library/lib_git.sh
+./library/lib_pyenv.sh
+./library/lib_nvm.sh
 ```
 
-## Archivos
+## Archivos y Rutas
 
-- `ubuntu.sh`: actualización del sistema, UFW y apertura de puertos.
-- `srvc_ssh.sh`: instalación, arranque, puerto y firewall de SSH.
-- `srvc_mysql.sh`: instalación, arranque, puerto, firewall y seguridad inicial de MySQL.
-- `srvc_nginx.sh`: instalación, arranque, puerto, firewall y validación de Nginx.
-- `lib_git.sh`: instalación y configuración global de Git.
-- `lib_pyenv.sh`: instalación de pyenv y una versión de Python.
-- `lib_nvm.sh`: instalación de nvm y una versión de Node.js.
+### 📁 default/ (Configuración Base)
+- `system.sh`: Administración de tareas básicas del SO (actualizaciones, limpieza y consultas).
+- `firewall.sh`: Administración interactiva del firewall UFW (puertos, reglas y estado).
+
+### 📁 service/ (Servicios)
+- `srvc_ssh.sh`: Instalación y gestión del servicio SSH (puerto, firewall y logs).
+- `srvc_mysql.sh`: Instalación y gestión de MySQL Server (puerto, firewall y seguridad).
+- `srvc_nginx.sh`: Instalación y gestión de Nginx (puerto, firewall y validación).
+
+### 📁 library/ (Librerías y Entornos)
+- `lib_git.sh`: Instalación y configuración global de Git (usuario, email y credenciales).
+- `lib_pyenv.sh`: Gestión de pyenv y versiones de Python.
+- `lib_nvm.sh`: Gestión de NVM y versiones de Node.js.
 
 ## Recomendaciones
 
