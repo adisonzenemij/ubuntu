@@ -389,11 +389,42 @@ show_project_git_status() {
   run_cmd git -C "$SELECTED_PROJECT" status
 }
 
+discard_project_changes() {
+  echo "----- 8. Descartar Cambios -----"
+  select_project || return 1
+
+  if [[ ! -d "$SELECTED_PROJECT/.git" ]]; then
+    echo "ERROR: El proyecto seleccionado no parece ser un repositorio Git."
+    return 1
+  fi
+
+  echo "Proyecto seleccionado: $SELECTED_PROJECT_NAME"
+  echo "Ruta               : $SELECTED_PROJECT"
+  echo
+  echo "Estado actual:"
+  run_cmd git -C "$SELECTED_PROJECT" status --short
+  echo
+  echo "AVISO: Esta opción descarta cambios en archivos modificados y elimina archivos no rastreados."
+  echo "No elimina commits ya creados."
+  echo
+
+  if ! ask_yes_no "¿Confirmas descartar todos los cambios locales del proyecto?"; then
+    echo "Operación cancelada."
+    return 0
+  fi
+
+  run_cmd git -C "$SELECTED_PROJECT" restore .
+  run_cmd git -C "$SELECTED_PROJECT" clean -fd
+  echo
+  echo "Estado posterior:"
+  run_cmd git -C "$SELECTED_PROJECT" status --short
+}
+
 # ==============================================================================
-# Menú Principal - Opción 8. Branch Local
+# Menú Principal - Opción 9. Branch Local
 # ==============================================================================
 show_project_local_branch() {
-  echo "----- 8. Branch Local -----"
+  echo "----- 9. Branch Local -----"
   select_project || return 1
 
   if [[ ! -d "$SELECTED_PROJECT/.git" ]]; then
@@ -408,10 +439,10 @@ show_project_local_branch() {
 }
 
 # ==============================================================================
-# Menú Principal - Opción 9. Consultar Branch
+# Menú Principal - Opción 10. Consultar Branch
 # ==============================================================================
 show_project_remote_branches() {
-  echo "----- 9. Consultar Branch -----"
+  echo "----- 10. Consultar Branch -----"
   select_project || return 1
 
   if [[ ! -d "$SELECTED_PROJECT/.git" ]]; then
@@ -426,7 +457,7 @@ show_project_remote_branches() {
 }
 
 # ==============================================================================
-# Menú Principal - Opción 10. Cambiar Branch
+# Menú Principal - Opción 11. Cambiar Branch
 # ==============================================================================
 select_project_branch() {
   local project_dir="$1"
@@ -526,7 +557,7 @@ switch_to_selected_branch() {
 }
 
 change_project_branch() {
-  echo "----- 10. Cambiar Branch -----"
+  echo "----- 11. Cambiar Branch -----"
   select_project || return 1
 
   if [[ ! -d "$SELECTED_PROJECT/.git" ]]; then
@@ -1355,7 +1386,7 @@ angular_deploy_menu() {
 
 
 # ==============================================================================
-# Menú Principal - Opción 11. Commit Rollback
+# Menú Principal - Opción 12. Commit Rollback
 # ==============================================================================
 select_recent_commit() {
   local project_dir="$1"
@@ -1402,7 +1433,7 @@ select_recent_commit() {
 }
 
 rollback_project_commit() {
-  echo "----- 11. Commit Rollback -----"
+  echo "----- 12. Commit Rollback -----"
   select_project || return 1
 
   if [[ ! -d "$SELECTED_PROJECT/.git" ]]; then
@@ -1484,14 +1515,14 @@ rollback_project_commit() {
 }
 
 # ==============================================================================
-# Menú Principal - Opción 12. Desplegar Proyectos
+# Menú Principal - Opción 13. Desplegar Proyectos
 # ==============================================================================
 deploy_projects_menu() {
   local option
   while true; do
     clear || true
     echo "=============================================="
-    echo "        12. Desplegar Proyectos"
+    echo "        13. Desplegar Proyectos"
     echo "=============================================="
     echo "1. Caso Python"
     echo "2. Caso Angular"
@@ -1530,11 +1561,12 @@ show_main_menu() {
   echo "5. Eliminar Proyectos"
   echo "6. Descargar Cambios"
   echo "7. Estado del Repo"
-  echo "8. Branch Local"
-  echo "9. Consultar Branch"
-  echo "10. Cambiar Branch"
-  echo "11. Commit Rollback"
-  echo "12. Desplegar Proyectos"
+  echo "8. Descartar Cambios"
+  echo "9. Branch Local"
+  echo "10. Consultar Branch"
+  echo "11. Cambiar Branch"
+  echo "12. Commit Rollback"
+  echo "13. Desplegar Proyectos"
   echo "0. Salir"
   echo "=============================================="
 }
@@ -1556,11 +1588,12 @@ main() {
       5) delete_project; pause_menu ;;
       6) pull_project_changes; pause_menu ;;
       7) show_project_git_status; pause_menu ;;
-      8) show_project_local_branch; pause_menu ;;
-      9) show_project_remote_branches; pause_menu ;;
-      10) change_project_branch; pause_menu ;;
-      11) rollback_project_commit; pause_menu ;;
-      12) deploy_projects_menu ;;
+      8) discard_project_changes; pause_menu ;;
+      9) show_project_local_branch; pause_menu ;;
+      10) show_project_remote_branches; pause_menu ;;
+      11) change_project_branch; pause_menu ;;
+      12) rollback_project_commit; pause_menu ;;
+      13) deploy_projects_menu ;;
       0) echo "Saliendo del menú Git + Despliegue."; exit 0 ;;
       *) echo "Opción no válida."; pause_menu ;;
     esac
