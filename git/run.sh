@@ -960,9 +960,33 @@ find_angular_dist_dir() {
 
   local candidates=()
   local item
+  local nested_dir
   shopt -s nullglob
+
+  if [[ -d "$dist_base/browser" ]]; then
+    candidates+=("$dist_base/browser")
+  fi
+
+  if [[ -d "$dist_base/browse" ]]; then
+    candidates+=("$dist_base/browse")
+  fi
+
   for item in "$dist_base"/*; do
-    [[ -d "$item" ]] && candidates+=("$item")
+    [[ -d "$item" ]] || continue
+
+    case "$(basename "$item")" in
+      browser|browse) continue ;;
+    esac
+
+    for nested_dir in "$item/browser" "$item/browse"; do
+      if [[ -d "$nested_dir" ]]; then
+        candidates+=("$nested_dir")
+      fi
+    done
+
+    if [[ ! -d "$item/browser" && ! -d "$item/browse" ]]; then
+      candidates+=("$item")
+    fi
   done
   shopt -u nullglob
 
@@ -975,7 +999,7 @@ find_angular_dist_dir() {
     echo "Carpetas encontradas en dist:" >&2
     local i option
     for i in "${!candidates[@]}"; do
-      echo "$((i + 1)). $(basename "${candidates[$i]}")" >&2
+      echo "$((i + 1)). ${candidates[$i]#"$dist_base"/}" >&2
     done
     while true; do
       read -r -p "Selecciona carpeta compilada: " option
@@ -993,6 +1017,11 @@ find_angular_dist_dir() {
 # ==============================================================================
 # Menú Angular - Opción 1. Detener Aplicación
 # ==============================================================================
+ensure_angular_runtime() {
+  ensure_command node nodejs
+  ensure_command npm npm
+}
+
 angular_stop_app() {
   echo "----- Angular - Detener Aplicación -----"
   select_web_service
@@ -1021,7 +1050,7 @@ angular_delete_build() {
 angular_install_dependencies() {
   echo "----- Angular - Instalar Dependencias -----"
   select_project || return 1
-  ensure_command node nodejs
+  ensure_angular_runtime
 
   if [[ -f "$SELECTED_PROJECT/package-lock.json" ]]; then
     run_cmd bash -lc "cd '$SELECTED_PROJECT' && npm ci"
@@ -1037,6 +1066,7 @@ angular_generate_build() {
   echo "----- Angular - Generar Compilado -----"
   select_project || return 1
   select_build_configuration
+  ensure_angular_runtime
 
   if [[ ! -f "$SELECTED_PROJECT/node_modules/@angular/cli/bin/ng" ]]; then
     echo "No existe Angular CLI local en node_modules. Ejecuta primero Instalar Dependencias."
@@ -1104,6 +1134,7 @@ angular_continuous_flow() {
   run_cmd rm -rf "$SELECTED_PROJECT/dist"
 
   echo "3. Instalando dependencias si hace falta..."
+  ensure_angular_runtime
   if [[ ! -d "$SELECTED_PROJECT/node_modules" ]]; then
     if [[ -f "$SELECTED_PROJECT/package-lock.json" ]]; then
       run_cmd bash -lc "cd '$SELECTED_PROJECT' && npm ci"
