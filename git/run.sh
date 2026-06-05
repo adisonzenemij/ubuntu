@@ -646,14 +646,17 @@ build_python_exec_command() {
       read -r -p "Módulo FastAPI [main:app]: " module_app
       module_app="${module_app:-main:app}"
       PY_EXEC_CMD="$project_dir/.venv/bin/python -m uvicorn $module_app --host 0.0.0.0 --port $port"
+      PY_SYSTEMD_EXEC_START="$PY_EXEC_CMD"
       ;;
     django)
       PY_EXEC_CMD="$project_dir/.venv/bin/python manage.py runserver 0.0.0.0:$port"
+      PY_SYSTEMD_EXEC_START="$PY_EXEC_CMD"
       ;;
     flask)
       read -r -p "Archivo/módulo Flask [app.py]: " module_app
       module_app="${module_app:-app.py}"
-      PY_EXEC_CMD="bash -lc 'source $project_dir/.venv/bin/activate && export FLASK_APP=$module_app && flask run --host=0.0.0.0 --port=$port'"
+      PY_EXEC_CMD="source $project_dir/.venv/bin/activate && export FLASK_APP=$module_app && flask run --host=0.0.0.0 --port=$port"
+      PY_SYSTEMD_EXEC_START="/bin/bash -lc '$PY_EXEC_CMD'"
       ;;
     otro)
       echo "Escribe el comando completo. Puedes usar {port} para reemplazar por el puerto."
@@ -663,8 +666,34 @@ build_python_exec_command() {
         return 1
       fi
       PY_EXEC_CMD="${custom_cmd//\{port\}/$port}"
+      PY_SYSTEMD_EXEC_START="/bin/bash -lc '$PY_EXEC_CMD'"
       ;;
   esac
+}
+
+ensure_python_venv_executables() {
+  local project_dir="$1"
+  local venv_dir="$project_dir/.venv"
+
+  if [[ ! -d "$venv_dir/bin" ]]; then
+    echo "No existe entorno virtual en: $venv_dir"
+    return 1
+  fi
+
+  run_cmd chmod -R u+rwX,g+rwX,o+rX "$venv_dir"
+  run_cmd find "$venv_dir/bin" -maxdepth 1 -type f -exec chmod ug+x {} \;
+
+  if [[ ! -x "$venv_dir/bin/python" ]]; then
+    echo "ERROR: $venv_dir/bin/python no quedo ejecutable."
+    echo "Recrea el entorno con la opción 3. Eliminar Entorno y 4. Generar Entorno."
+    return 1
+  fi
+
+  if ! "$venv_dir/bin/python" --version >/dev/null 2>&1; then
+    echo "ERROR: No se pudo ejecutar $venv_dir/bin/python."
+    echo "Revisa permisos del entorno virtual o si la ruta del proyecto esta montada con noexec."
+    return 1
+  fi
 }
 
 python_service_name() {
@@ -706,6 +735,7 @@ python_run_app() {
   echo
 
   if ask_yes_no "¿Deseas ejecutarlo ahora en primer plano?"; then
+    ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
     cd "$SELECTED_PROJECT"
     bash -lc "$PY_EXEC_CMD"
   else
@@ -747,6 +777,7 @@ python_create_venv() {
     run_cmd python3 -m venv "$SELECTED_PROJECT/.venv"
   fi
 
+  ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
   run_cmd "$SELECTED_PROJECT/.venv/bin/python" --version
 }
 
@@ -776,6 +807,7 @@ python_install_dependencies() {
 
   run_cmd "$SELECTED_PROJECT/.venv/bin/python" -m pip install --upgrade pip
   run_cmd "$SELECTED_PROJECT/.venv/bin/pip" install -r "$req_file"
+  ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
 }
 
 # ==============================================================================
@@ -795,6 +827,7 @@ python_generate_systemd() {
 
   echo "Servicio a generar: $service_name"
   echo "Archivo systemd  : $service_file"
+  ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
 
   cat <<EOF_SERVICE | $SUDO_CMD tee "$service_file" >/dev/null
 [Unit]
@@ -805,7 +838,7 @@ After=network.target
 Type=simple
 User=${APP_USER}
 WorkingDirectory=${SELECTED_PROJECT}
-ExecStart=/bin/bash -lc '${PY_EXEC_CMD}'
+ExecStart=${PY_SYSTEMD_EXEC_START}
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
@@ -849,6 +882,7 @@ python_continuous_flow() {
   ensure_command python3 python3
   ensure_command pip3 python3-pip
   run_cmd python3 -m venv "$SELECTED_PROJECT/.venv"
+  ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
 
   echo "4. Instalando dependencias..."
   req_file="$(select_file_if_exists "$SELECTED_PROJECT" "requirements.txt" "requirements-prod.txt" "requirements/production.txt" "requirements/dev.txt" || true)"
@@ -858,6 +892,7 @@ python_continuous_flow() {
   if [[ -f "$req_file" ]]; then
     run_cmd "$SELECTED_PROJECT/.venv/bin/python" -m pip install --upgrade pip
     run_cmd "$SELECTED_PROJECT/.venv/bin/pip" install -r "$req_file"
+    ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
   else
     echo "No se instaló dependencias porque no existe el archivo: $req_file"
   fi
@@ -872,7 +907,7 @@ After=network.target
 Type=simple
 User=${APP_USER}
 WorkingDirectory=${SELECTED_PROJECT}
-ExecStart=/bin/bash -lc '${PY_EXEC_CMD}'
+ExecStart=${PY_SYSTEMD_EXEC_START}
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
