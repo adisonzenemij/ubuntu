@@ -1130,6 +1130,98 @@ find_angular_dist_dir() {
 # ==============================================================================
 # Menú Angular - Opción 1. Detener Aplicación
 # ==============================================================================
+default_angular_base_href() {
+  local target_dir="$1"
+  local relative_path
+
+  if [[ "$target_dir" == /var/www/html ]]; then
+    echo "/"
+    return 0
+  fi
+
+  if [[ "$target_dir" == /var/www/html/* ]]; then
+    relative_path="${target_dir#/var/www/html/}"
+    relative_path="${relative_path#/}"
+    relative_path="${relative_path%/}"
+    echo "/${relative_path}/"
+    return 0
+  fi
+
+  echo "/$(basename "$target_dir")/"
+}
+
+normalize_base_href_value() {
+  local value="$1"
+
+  if [[ "$value" == http://* || "$value" == https://* || "$value" == ./* ]]; then
+    echo "$value"
+    return 0
+  fi
+
+  [[ "$value" == /* ]] || value="/$value"
+  [[ "$value" == */ ]] || value="$value/"
+  echo "$value"
+}
+
+normalize_angular_index() {
+  local target_dir="$1"
+  local base_href="$2"
+  local index_file="$target_dir/index.html"
+  local source_index=""
+  local candidates=()
+  local item
+  local option
+
+  if [[ ! -f "$index_file" ]]; then
+    if [[ -f "$target_dir/index.csr.html" ]]; then
+      source_index="$target_dir/index.csr.html"
+    else
+      shopt -s nullglob
+      for item in "$target_dir"/index*.html; do
+        [[ -f "$item" ]] && candidates+=("$item")
+      done
+      shopt -u nullglob
+
+      if (( ${#candidates[@]} == 1 )); then
+        source_index="${candidates[0]}"
+      elif (( ${#candidates[@]} > 1 )); then
+        echo "Archivos index encontrados:"
+        local i
+        for i in "${!candidates[@]}"; do
+          echo "$((i + 1)). $(basename "${candidates[$i]}")"
+        done
+        echo "0. No crear index.html"
+        while true; do
+          read -r -p "Selecciona el archivo que se usara como index.html: " option
+          if [[ "$option" == "0" ]]; then
+            break
+          fi
+          if [[ "$option" =~ ^[0-9]+$ ]] && (( option >= 1 && option <= ${#candidates[@]} )); then
+            source_index="${candidates[$((option - 1))]}"
+            break
+          fi
+          echo "Opcion invalida."
+        done
+      fi
+    fi
+
+    if [[ -n "$source_index" ]]; then
+      run_cmd $SUDO_CMD cp "$source_index" "$index_file"
+      echo "index.html creado desde: $(basename "$source_index")"
+    else
+      echo "No se encontro archivo index alternativo para crear index.html."
+      return 0
+    fi
+  fi
+
+  echo "Configurando base href para despliegue Angular: $base_href"
+  if $SUDO_CMD grep -qi '<base[[:space:]][^>]*href=' "$index_file"; then
+    run_cmd $SUDO_CMD sed -i -E "s#<base[[:space:]][^>]*href=[\"'][^\"']*[\"'][^>]*>#<base href=\"${base_href}\">#I" "$index_file"
+  else
+    run_cmd $SUDO_CMD sed -i -E "s#<head([^>]*)>#<head\\1><base href=\"${base_href}\">#I" "$index_file"
+  fi
+}
+
 ensure_angular_runtime() {
   if [[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" || -s "$HOME/.nvm/nvm.sh" || -s "/root/.nvm/nvm.sh" ]]; then
     return 0
@@ -1237,6 +1329,8 @@ angular_publish_build() {
 
   local dist_dir
   local target_dir
+  local base_href
+  local default_base_href
   dist_dir="$(find_angular_dist_dir "$SELECTED_PROJECT" || true)"
 
   if [[ -z "${dist_dir:-}" || ! -d "$dist_dir" ]]; then
@@ -1246,9 +1340,13 @@ angular_publish_build() {
 
   read -r -p "Ruta destino web [/var/www/html/${SELECTED_PROJECT_NAME}]: " target_dir
   target_dir="${target_dir:-/var/www/html/${SELECTED_PROJECT_NAME}}"
+  default_base_href="$(default_angular_base_href "$target_dir")"
+  read -r -p "Base href Angular [${default_base_href}]: " base_href
+  base_href="$(normalize_base_href_value "${base_href:-$default_base_href}")"
 
   run_cmd $SUDO_CMD mkdir -p "$target_dir"
   run_cmd $SUDO_CMD rsync -av --delete "$dist_dir/" "$target_dir/"
+  normalize_angular_index "$target_dir" "$base_href"
   run_cmd $SUDO_CMD chown -R www-data:www-data "$target_dir" || true
   run_cmd $SUDO_CMD systemctl restart "$WEB_SERVICE"
   run_cmd $SUDO_CMD systemctl --no-pager status "$WEB_SERVICE" || true
@@ -1277,6 +1375,8 @@ angular_continuous_flow() {
 
   local target_dir
   local dist_dir
+  local base_href
+  local default_base_href
 
   echo "1. Deteniendo servicio web..."
   run_cmd $SUDO_CMD systemctl stop "$WEB_SERVICE" || true
@@ -1309,9 +1409,13 @@ angular_continuous_flow() {
 
   read -r -p "Ruta destino web [/var/www/html/${SELECTED_PROJECT_NAME}]: " target_dir
   target_dir="${target_dir:-/var/www/html/${SELECTED_PROJECT_NAME}}"
+  default_base_href="$(default_angular_base_href "$target_dir")"
+  read -r -p "Base href Angular [${default_base_href}]: " base_href
+  base_href="$(normalize_base_href_value "${base_href:-$default_base_href}")"
 
   run_cmd $SUDO_CMD mkdir -p "$target_dir"
   run_cmd $SUDO_CMD rsync -av --delete "$dist_dir/" "$target_dir/"
+  normalize_angular_index "$target_dir" "$base_href"
   run_cmd $SUDO_CMD chown -R www-data:www-data "$target_dir" || true
 
   echo "6. Reiniciando servicio web..."
