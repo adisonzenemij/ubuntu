@@ -40,10 +40,13 @@ ask_yes_no() {
 
   while true; do
     read -r -p "$prompt (S/N - Y/N): " answer
+    answer="${answer//$'\r'/}"
+    answer="${answer#"${answer%%[![:space:]]*}"}"
+    answer="${answer%"${answer##*[![:space:]]}"}"
     case "${answer,,}" in
       s|si|sí|y|yes) return 0 ;;
       n|no) return 1 ;;
-      *) echo "Respuesta no válida. Escribe S/N o Y/N." ;;
+      *) echo "Respuesta no válida. Escribe S, N, Y o Yes/No." ;;
     esac
   done
 }
