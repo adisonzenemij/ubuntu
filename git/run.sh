@@ -19,6 +19,7 @@ BASE_DIR="$DEFAULT_BASE_DIR"
 GIT_FOLDER="$DEFAULT_GIT_FOLDER"
 GIT_DIR="$BASE_DIR/$GIT_FOLDER"
 APP_USER=""
+PYENV_PYTHON_VERSION=""
 
 # ==============================================================================
 # Funciones Generales
@@ -152,14 +153,106 @@ $cmd"
   fi
 }
 
+install_pyenv_build_dependencies() {
+  echo "Instalando dependencias necesarias para compilar Python con pyenv..."
+  run_cmd $SUDO_CMD apt update -y
+  run_cmd $SUDO_CMD apt install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
+    libsqlite3-dev wget curl llvm libncursesw5-dev xz-utils tk-dev libxml2-dev \
+    libxmlsec1-dev libffi-dev liblzma-dev git
+}
+
+install_pyenv_for_app_user() {
+  ask_app_user_if_needed
+
+  if ! command -v curl >/dev/null 2>&1; then
+    run_cmd $SUDO_CMD apt update -y
+    run_cmd $SUDO_CMD apt install -y curl
+  fi
+
+  install_pyenv_build_dependencies
+
+  echo "Instalando pyenv para el usuario: $APP_USER"
+  run_as_app_user_shell 'if [[ ! -d "$HOME/.pyenv" ]]; then curl https://pyenv.run | bash; else echo "pyenv ya existe en $HOME/.pyenv"; fi'
+}
+
+ensure_pyenv_for_app_user() {
+  echo "Verificando pyenv del usuario de despliegue: $APP_USER"
+
+  if run_as_app_user_shell 'command -v pyenv >/dev/null 2>&1 && pyenv --version'; then
+    return 0
+  fi
+
+  echo
+  echo "No se encontró pyenv configurado para el usuario '$APP_USER'."
+  echo "IMPORTANTE: no se usará el pyenv de root (/root/.pyenv), porque el servicio se ejecuta con '$APP_USER'."
+
+  if ask_yes_no "¿Deseas instalar pyenv para el usuario '$APP_USER' ahora?"; then
+    install_pyenv_for_app_user
+  else
+    echo "ERROR: Para usar manejador de versiones, instala/configura pyenv para '$APP_USER' y vuelve a ejecutar el flujo."
+    echo "Ejemplo:"
+    echo "  sudo -H -u $APP_USER bash -lc 'curl https://pyenv.run | bash'"
+    return 1
+  fi
+
+  run_as_app_user_shell 'command -v pyenv >/dev/null 2>&1 && pyenv --version'
+}
+
+select_pyenv_python_version() {
+  local current_version=""
+  local default_version=""
+  local selected_version=""
+
+  current_version="$(run_as_app_user_shell 'pyenv version-name 2>/dev/null || true' 2>/dev/null | tail -n 1 | tr -d "[:space:]" || true)"
+
+  if [[ -n "${PYENV_PYTHON_VERSION:-}" ]]; then
+    default_version="$PYENV_PYTHON_VERSION"
+  elif [[ -n "$current_version" && "$current_version" != "system" ]]; then
+    default_version="$current_version"
+  else
+    default_version="3.13.3"
+  fi
+
+  echo
+  echo "Versiones Python instaladas en pyenv para '$APP_USER':"
+  run_as_app_user_shell 'pyenv versions --bare 2>/dev/null || true'
+
+  read -r -p "Versión Python pyenv para crear el entorno virtual [$default_version]: " selected_version
+  selected_version="${selected_version:-$default_version}"
+  selected_version="${selected_version// /}"
+
+  if [[ -z "$selected_version" || "$selected_version" == "system" ]]; then
+    echo "ERROR: Debes indicar una versión concreta de pyenv, por ejemplo: 3.13.3"
+    return 1
+  fi
+
+  PYENV_PYTHON_VERSION="$selected_version"
+  save_config
+
+  if ! run_as_app_user_shell "pyenv versions --bare | grep -Fx '$PYENV_PYTHON_VERSION' >/dev/null"; then
+    echo "La versión $PYENV_PYTHON_VERSION no está instalada para '$APP_USER'."
+    if ask_yes_no "¿Deseas instalar Python $PYENV_PYTHON_VERSION con pyenv ahora?"; then
+      install_pyenv_build_dependencies
+      run_as_app_user_shell "pyenv install -s '$PYENV_PYTHON_VERSION'"
+    else
+      echo "ERROR: Instala la versión con:"
+      echo "  sudo -H -u $APP_USER bash -lc 'export PYENV_ROOT=\$HOME/.pyenv; export PATH=\$PYENV_ROOT/bin:\$PATH; eval \"\$(pyenv init -)\"; pyenv install $PYENV_PYTHON_VERSION'"
+      return 1
+    fi
+  fi
+
+  run_as_app_user_shell "PYENV_VERSION='$PYENV_PYTHON_VERSION' python3 --version"
+}
+
 ensure_python_runtime_for_app_user() {
   echo "Verificando Python del usuario de despliegue: $APP_USER"
 
-  if ! run_as_app_user_shell 'command -v pyenv >/dev/null 2>&1 && pyenv --version || true; command -v python3; python3 --version; python3 -m venv --help >/dev/null'; then
-    echo "ERROR: El usuario '$APP_USER' no puede ejecutar python3 con soporte venv."
-    echo "Si deseas usar pyenv, instala/configura pyenv para ese usuario, por ejemplo:"
-    echo "  sudo -H -u $APP_USER bash -lc 'curl https://pyenv.run | bash'"
-    echo "  sudo -H -u $APP_USER bash -lc 'pyenv install 3.13.3 && pyenv global 3.13.3'"
+  ensure_pyenv_for_app_user || return 1
+  select_pyenv_python_version || return 1
+
+  if ! run_as_app_user_shell "PYENV_VERSION='$PYENV_PYTHON_VERSION' command -v python3; PYENV_VERSION='$PYENV_PYTHON_VERSION' python3 --version; PYENV_VERSION='$PYENV_PYTHON_VERSION' python3 -m venv --help >/dev/null"; then
+    echo "ERROR: Python $PYENV_PYTHON_VERSION de pyenv no puede crear entornos virtuales."
+    echo "Reinstala la versión con pyenv o revisa la instalación del usuario '$APP_USER'."
     return 1
   fi
 }
@@ -169,7 +262,7 @@ create_python_venv_with_pyenv() {
 
   ensure_python_runtime_for_app_user || return 1
   apply_git_directory_permissions "$project_dir"
-  run_as_app_user_shell "cd '$project_dir' && python3 -m venv .venv"
+  run_as_app_user_shell "cd '$project_dir' && PYENV_VERSION='$PYENV_PYTHON_VERSION' python3 -m venv .venv"
 }
 
 run_project_venv_python() {
@@ -238,6 +331,7 @@ save_config() {
 BASE_DIR="$BASE_DIR"
 GIT_FOLDER="$GIT_FOLDER"
 APP_USER="$APP_USER"
+PYENV_PYTHON_VERSION="$PYENV_PYTHON_VERSION"
 EOF_CONF
   echo "Configuración guardada en: $CONFIG_FILE"
 }
