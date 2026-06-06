@@ -647,11 +647,11 @@ build_python_exec_command() {
       read -r -p "Módulo FastAPI [main:app]: " module_app
       module_app="${module_app:-main:app}"
       PY_EXEC_CMD="$project_dir/.venv/bin/python -m uvicorn $module_app --host 0.0.0.0 --port $port"
-      PY_SYSTEMD_EXEC_START="$PY_EXEC_CMD"
+      PY_SYSTEMD_EXEC_START="/bin/bash -lc 'exec $PY_EXEC_CMD'"
       ;;
     django)
       PY_EXEC_CMD="$project_dir/.venv/bin/python manage.py runserver 0.0.0.0:$port"
-      PY_SYSTEMD_EXEC_START="$PY_EXEC_CMD"
+      PY_SYSTEMD_EXEC_START="/bin/bash -lc 'exec $PY_EXEC_CMD'"
       ;;
     flask)
       read -r -p "Archivo/módulo Flask [app.py]: " module_app
@@ -681,8 +681,10 @@ ensure_python_venv_executables() {
     return 1
   fi
 
-  run_cmd chmod -R u+rwX,g+rwX,o+rX "$venv_dir"
-  run_cmd find "$venv_dir/bin" -maxdepth 1 -type f -exec chmod ug+x {} \;
+  apply_git_directory_permissions "$project_dir"
+  run_cmd $SUDO_CMD chown -R "$APP_USER:$APP_USER" "$venv_dir"
+  run_cmd $SUDO_CMD chmod -R u+rwX,g+rwX,o+rX "$venv_dir"
+  run_cmd $SUDO_CMD find "$venv_dir/bin" -maxdepth 1 -type f -exec chmod a+x {} \;
 
   if [[ ! -x "$venv_dir/bin/python" ]]; then
     echo "ERROR: $venv_dir/bin/python no quedo ejecutable."
@@ -690,9 +692,9 @@ ensure_python_venv_executables() {
     return 1
   fi
 
-  if ! "$venv_dir/bin/python" --version >/dev/null 2>&1; then
-    echo "ERROR: No se pudo ejecutar $venv_dir/bin/python."
-    echo "Revisa permisos del entorno virtual o si la ruta del proyecto esta montada con noexec."
+  if ! $SUDO_CMD -u "$APP_USER" "$venv_dir/bin/python" --version >/dev/null 2>&1; then
+    echo "ERROR: El usuario del servicio '$APP_USER' no pudo ejecutar $venv_dir/bin/python."
+    echo "Revisa permisos del proyecto, del entorno virtual o si la ruta esta montada con noexec."
     return 1
   fi
 }
