@@ -29,6 +29,18 @@ run_cmd() {
   "$@"
 }
 
+run_as_app_user() {
+  echo "+ [as $APP_USER] $*"
+
+  if [[ "$(id -un)" == "$APP_USER" ]]; then
+    "$@"
+  elif [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    runuser -u "$APP_USER" -- "$@"
+  else
+    sudo -u "$APP_USER" "$@"
+  fi
+}
+
 pause_menu() {
   echo
   read -r -p "Presiona ENTER para continuar..."
@@ -692,9 +704,12 @@ ensure_python_venv_executables() {
     return 1
   fi
 
-  if ! $SUDO_CMD -u "$APP_USER" "$venv_dir/bin/python" --version >/dev/null 2>&1; then
+  if ! run_as_app_user "$venv_dir/bin/python" --version >/dev/null 2>&1; then
     echo "ERROR: El usuario del servicio '$APP_USER' no pudo ejecutar $venv_dir/bin/python."
     echo "Revisa permisos del proyecto, del entorno virtual o si la ruta esta montada con noexec."
+    echo "Diagnostico sugerido:"
+    echo "  namei -l $venv_dir/bin/python"
+    echo "  findmnt -T $venv_dir/bin/python -o TARGET,OPTIONS"
     return 1
   fi
 }
@@ -922,7 +937,8 @@ python_create_venv() {
       return 0
     fi
   else
-    run_cmd python3 -m venv "$SELECTED_PROJECT/.venv"
+    apply_git_directory_permissions "$SELECTED_PROJECT"
+    run_as_app_user python3 -m venv "$SELECTED_PROJECT/.venv"
   fi
 
   ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
@@ -938,7 +954,8 @@ python_install_dependencies() {
 
   if [[ ! -d "$SELECTED_PROJECT/.venv" ]]; then
     echo "No existe .venv. Generando entorno virtual..."
-    run_cmd python3 -m venv "$SELECTED_PROJECT/.venv"
+    apply_git_directory_permissions "$SELECTED_PROJECT"
+    run_as_app_user python3 -m venv "$SELECTED_PROJECT/.venv"
   fi
 
   local req_file
@@ -953,8 +970,8 @@ python_install_dependencies() {
     return 1
   fi
 
-  run_cmd "$SELECTED_PROJECT/.venv/bin/python" -m pip install --upgrade pip
-  run_cmd "$SELECTED_PROJECT/.venv/bin/pip" install -r "$req_file"
+  run_as_app_user "$SELECTED_PROJECT/.venv/bin/python" -m pip install --upgrade pip
+  run_as_app_user "$SELECTED_PROJECT/.venv/bin/pip" install -r "$req_file"
   ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
 }
 
@@ -1038,7 +1055,8 @@ python_continuous_flow() {
   echo "3. Generando entorno virtual..."
   ensure_command python3 python3
   ensure_command pip3 python3-pip
-  run_cmd python3 -m venv "$SELECTED_PROJECT/.venv"
+  apply_git_directory_permissions "$SELECTED_PROJECT"
+  run_as_app_user python3 -m venv "$SELECTED_PROJECT/.venv"
   ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
 
   echo "4. Instalando dependencias..."
@@ -1047,8 +1065,8 @@ python_continuous_flow() {
     read -r -p "Ruta del archivo de dependencias: " req_file
   fi
   if [[ -f "$req_file" ]]; then
-    run_cmd "$SELECTED_PROJECT/.venv/bin/python" -m pip install --upgrade pip
-    run_cmd "$SELECTED_PROJECT/.venv/bin/pip" install -r "$req_file"
+    run_as_app_user "$SELECTED_PROJECT/.venv/bin/python" -m pip install --upgrade pip
+    run_as_app_user "$SELECTED_PROJECT/.venv/bin/pip" install -r "$req_file"
     ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
   else
     echo "No se instaló dependencias porque no existe el archivo: $req_file"
