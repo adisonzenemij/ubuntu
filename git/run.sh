@@ -772,7 +772,7 @@ edit_env_variables() {
 
   tmp_file="$(mktemp)"
 
-  while IFS= read -r line || [[ -n "$line" ]]; do
+  while IFS= read -r line <&3 || [[ -n "$line" ]]; do
     if [[ "$line" =~ ^[[:space:]]*# || -z "${line// }" || "$line" != *"="* ]]; then
       printf '%s\n' "$line" >> "$tmp_file"
       continue
@@ -803,7 +803,7 @@ edit_env_variables() {
     else
       printf '%s\n' "$line" >> "$tmp_file"
     fi
-  done < "$env_file"
+  done 3< "$env_file"
 
   mv "$tmp_file" "$env_file"
 
