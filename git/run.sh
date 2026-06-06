@@ -277,6 +277,27 @@ run_project_venv_pip() {
   run_as_app_user_shell "cd '$project_dir' && .venv/bin/pip $*"
 }
 
+ensure_python_mysql_auth_dependencies() {
+  local project_dir="$1"
+
+  if [[ ! -x "$project_dir/.venv/bin/python" ]]; then
+    return 0
+  fi
+
+  # PyMySQL requiere cryptography cuando MySQL usa sha256_password o
+  # caching_sha2_password. Sin este paquete la aplicación puede instalar
+  # requirements correctamente, pero fallar al arrancar con:
+  # RuntimeError: 'cryptography' package is required for sha256_password or caching_sha2_password auth methods
+  if run_as_app_user_shell "cd '$project_dir' && .venv/bin/python -c 'import pymysql' >/dev/null 2>&1"; then
+    if run_as_app_user_shell "cd '$project_dir' && .venv/bin/python -c 'import cryptography' >/dev/null 2>&1"; then
+      echo "Dependencia cryptography disponible para autenticación MySQL/PyMySQL."
+    else
+      echo "Instalando dependencia requerida para autenticación MySQL/PyMySQL: cryptography"
+      run_as_app_user_shell "cd '$project_dir' && .venv/bin/python -m pip install cryptography"
+    fi
+  fi
+}
+
 pause_menu() {
   echo
   read -r -p "Presiona ENTER para continuar..."
@@ -1209,6 +1230,7 @@ python_install_dependencies() {
 
   run_as_app_user_shell "cd '$SELECTED_PROJECT' && .venv/bin/python -m pip install --upgrade pip"
   run_as_app_user_shell "cd '$SELECTED_PROJECT' && .venv/bin/pip install -r '$req_file'"
+  ensure_python_mysql_auth_dependencies "$SELECTED_PROJECT"
   ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
 }
 
@@ -1301,6 +1323,7 @@ python_continuous_flow() {
   if [[ -f "$req_file" ]]; then
     run_as_app_user_shell "cd '$SELECTED_PROJECT' && .venv/bin/python -m pip install --upgrade pip"
     run_as_app_user_shell "cd '$SELECTED_PROJECT' && .venv/bin/pip install -r '$req_file'"
+    ensure_python_mysql_auth_dependencies "$SELECTED_PROJECT"
     ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
   else
     echo "No se instaló dependencias porque no existe el archivo: $req_file"
