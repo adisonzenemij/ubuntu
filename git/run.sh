@@ -18,7 +18,7 @@ DEFAULT_GIT_FOLDER="git"
 BASE_DIR="$DEFAULT_BASE_DIR"
 GIT_FOLDER="$DEFAULT_GIT_FOLDER"
 GIT_DIR="$BASE_DIR/$GIT_FOLDER"
-APP_USER="$(whoami)"
+APP_USER=""
 
 # ==============================================================================
 # Funciones Generales
@@ -27,6 +27,161 @@ APP_USER="$(whoami)"
 run_cmd() {
   echo "+ $*"
   "$@"
+}
+
+current_login_user() {
+  local detected=""
+
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER:-}" != "root" ]]; then
+    detected="$SUDO_USER"
+  else
+    detected="$(logname 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$detected" || "$detected" == "root" ]]; then
+    detected="$(id -un 2>/dev/null || true)"
+  fi
+
+  printf '%s' "$detected"
+}
+
+detect_default_app_user() {
+  local detected
+  detected="$(current_login_user)"
+
+  if [[ -n "$detected" && "$detected" != "root" ]] && id "$detected" >/dev/null 2>&1; then
+    printf '%s' "$detected"
+    return 0
+  fi
+
+  printf ''
+}
+
+ask_app_user_if_needed() {
+  local detected
+
+  if [[ -n "${APP_USER:-}" ]] && id "$APP_USER" >/dev/null 2>&1 && [[ "$APP_USER" != "root" ]]; then
+    return 0
+  fi
+
+  detected="$(detect_default_app_user)"
+  if [[ -n "$detected" ]]; then
+    APP_USER="$detected"
+    return 0
+  fi
+
+  echo "No se pudo detectar automáticamente el usuario que ejecutará el servicio."
+  echo "No se recomienda usar root para ejecutar aplicaciones desplegadas."
+  echo "Usuarios disponibles con shell común:"
+  awk -F: '$7 ~ /(bash|sh)$/ && $1 != "root" {print "- "$1}' /etc/passwd || true
+
+  while true; do
+    read -r -p "Usuario que ejecutará el servicio/despliegue: " APP_USER
+    APP_USER="${APP_USER// /}"
+
+    if [[ -z "$APP_USER" ]]; then
+      echo "El usuario no puede estar vacío."
+    elif [[ "$APP_USER" == "root" ]]; then
+      echo "No se recomienda usar root. Escribe un usuario normal del servidor."
+    elif id "$APP_USER" >/dev/null 2>&1; then
+      return 0
+    else
+      echo "El usuario '$APP_USER' no existe en el servidor."
+    fi
+  done
+}
+
+run_as_app_user() {
+  ask_app_user_if_needed
+  echo "+ [as $APP_USER] $*"
+
+  if [[ "$(id -un)" == "$APP_USER" ]]; then
+    "$@"
+  elif [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    runuser -u "$APP_USER" -- "$@"
+  else
+    sudo -u "$APP_USER" "$@"
+  fi
+}
+
+get_app_user_home() {
+  ask_app_user_if_needed
+  getent passwd "$APP_USER" | cut -d: -f6
+}
+
+pyenv_bootstrap_script() {
+  local app_home
+  app_home="$(get_app_user_home)"
+
+  cat <<EOF_PYENV_BOOTSTRAP
+export HOME='$app_home'
+export PYENV_ROOT='${app_home}/.pyenv'
+if [[ -d "\$PYENV_ROOT/bin" ]]; then
+  export PATH="\$PYENV_ROOT/bin:\$PATH"
+fi
+if [[ -d "\$PYENV_ROOT/shims" ]]; then
+  export PATH="\$PYENV_ROOT/shims:\$PATH"
+fi
+if [[ -f "\$HOME/.bashrc" ]]; then
+  # No se hace source completo para evitar salidas interactivas inesperadas.
+  :
+fi
+if command -v pyenv >/dev/null 2>&1; then
+  eval "\$(pyenv init -)"
+fi
+EOF_PYENV_BOOTSTRAP
+}
+
+run_as_app_user_shell() {
+  ask_app_user_if_needed
+  local cmd="$1"
+  local bootstrap
+  bootstrap="$(pyenv_bootstrap_script)"
+
+  echo "+ [as $APP_USER] bash -lc $cmd"
+
+  if [[ "$(id -un)" == "$APP_USER" ]]; then
+    bash -lc "$bootstrap
+$cmd"
+  elif [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+    runuser -u "$APP_USER" -- bash -lc "$bootstrap
+$cmd"
+  else
+    sudo -H -u "$APP_USER" bash -lc "$bootstrap
+$cmd"
+  fi
+}
+
+ensure_python_runtime_for_app_user() {
+  echo "Verificando Python del usuario de despliegue: $APP_USER"
+
+  if ! run_as_app_user_shell 'command -v pyenv >/dev/null 2>&1 && pyenv --version || true; command -v python3; python3 --version; python3 -m venv --help >/dev/null'; then
+    echo "ERROR: El usuario '$APP_USER' no puede ejecutar python3 con soporte venv."
+    echo "Si deseas usar pyenv, instala/configura pyenv para ese usuario, por ejemplo:"
+    echo "  sudo -H -u $APP_USER bash -lc 'curl https://pyenv.run | bash'"
+    echo "  sudo -H -u $APP_USER bash -lc 'pyenv install 3.13.3 && pyenv global 3.13.3'"
+    return 1
+  fi
+}
+
+create_python_venv_with_pyenv() {
+  local project_dir="$1"
+
+  ensure_python_runtime_for_app_user || return 1
+  apply_git_directory_permissions "$project_dir"
+  run_as_app_user_shell "cd '$project_dir' && python3 -m venv .venv"
+}
+
+run_project_venv_python() {
+  local project_dir="$1"
+  shift
+  run_as_app_user_shell "cd '$project_dir' && .venv/bin/python $*"
+}
+
+run_project_venv_pip() {
+  local project_dir="$1"
+  shift
+  run_as_app_user_shell "cd '$project_dir' && .venv/bin/pip $*"
 }
 
 pause_menu() {
@@ -71,10 +226,14 @@ load_config() {
   BASE_DIR="${BASE_DIR:-$DEFAULT_BASE_DIR}"
   GIT_FOLDER="${GIT_FOLDER:-$DEFAULT_GIT_FOLDER}"
   GIT_DIR="$BASE_DIR/$GIT_FOLDER"
-  APP_USER="${APP_USER:-$(whoami)}"
+
+  if [[ -z "${APP_USER:-}" ]] || ! id "$APP_USER" >/dev/null 2>&1 || [[ "$APP_USER" == "root" ]]; then
+    APP_USER="$(detect_default_app_user)"
+  fi
 }
 
 save_config() {
+  ask_app_user_if_needed
   cat > "$CONFIG_FILE" <<EOF_CONF
 BASE_DIR="$BASE_DIR"
 GIT_FOLDER="$GIT_FOLDER"
@@ -106,6 +265,7 @@ ensure_command() {
 apply_git_directory_permissions() {
   local target_dir="$1"
 
+  ask_app_user_if_needed
   run_cmd $SUDO_CMD chown -R "$APP_USER:$APP_USER" "$target_dir"
   run_cmd $SUDO_CMD chmod -R ug+rwX,o+rX "$target_dir"
 }
@@ -212,20 +372,18 @@ configure_directory() {
   fi
 
   GIT_DIR="$BASE_DIR/$GIT_FOLDER"
-  APP_USER="$(whoami)"
+  APP_USER="$(detect_default_app_user)"
 
   echo
-  echo "Usuario detectado en la sesión actual: $APP_USER"
-  if ask_yes_no "¿Deseas asignar permisos a otro usuario del servidor?"; then
-    while true; do
-      read -r -p "Nombre del usuario del servidor: " APP_USER
-      if valid_user "$APP_USER"; then
-        break
-      fi
-      echo "El usuario '$APP_USER' no existe en el servidor."
-      echo "Usuarios disponibles con shell común:"
-      awk -F: '$7 ~ /(bash|sh)$/ {print "- "$1}' /etc/passwd || true
-    done
+  if [[ -n "$APP_USER" ]]; then
+    echo "Usuario detectado para permisos/servicio: $APP_USER"
+  else
+    echo "No se detectó un usuario normal automáticamente."
+  fi
+
+  if [[ -z "$APP_USER" ]] || ask_yes_no "¿Deseas asignar permisos a otro usuario del servidor?"; then
+    APP_USER=""
+    ask_app_user_if_needed
   fi
 
   echo
@@ -692,9 +850,12 @@ ensure_python_venv_executables() {
     return 1
   fi
 
-  if ! $SUDO_CMD -u "$APP_USER" "$venv_dir/bin/python" --version >/dev/null 2>&1; then
+  if ! run_as_app_user "$venv_dir/bin/python" --version >/dev/null 2>&1; then
     echo "ERROR: El usuario del servicio '$APP_USER' no pudo ejecutar $venv_dir/bin/python."
     echo "Revisa permisos del proyecto, del entorno virtual o si la ruta esta montada con noexec."
+    echo "Diagnostico sugerido:"
+    echo "  namei -l $venv_dir/bin/python"
+    echo "  findmnt -T $venv_dir/bin/python -o TARGET,OPTIONS"
     return 1
   fi
 }
@@ -913,8 +1074,7 @@ python_delete_venv() {
 python_create_venv() {
   echo "----- Python - Generar Entorno -----"
   select_project || return 1
-  ensure_command python3 python3
-  ensure_command pip3 python3-pip
+  ensure_python_runtime_for_app_user || return 1
 
   if [[ -d "$SELECTED_PROJECT/.venv" ]]; then
     echo "Ya existe entorno virtual: $SELECTED_PROJECT/.venv"
@@ -922,11 +1082,11 @@ python_create_venv() {
       return 0
     fi
   else
-    run_cmd python3 -m venv "$SELECTED_PROJECT/.venv"
+    create_python_venv_with_pyenv "$SELECTED_PROJECT"
   fi
 
   ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
-  run_cmd "$SELECTED_PROJECT/.venv/bin/python" --version
+  run_as_app_user_shell "cd '$SELECTED_PROJECT' && .venv/bin/python --version"
 }
 
 # ==============================================================================
@@ -938,7 +1098,7 @@ python_install_dependencies() {
 
   if [[ ! -d "$SELECTED_PROJECT/.venv" ]]; then
     echo "No existe .venv. Generando entorno virtual..."
-    run_cmd python3 -m venv "$SELECTED_PROJECT/.venv"
+    create_python_venv_with_pyenv "$SELECTED_PROJECT"
   fi
 
   local req_file
@@ -953,8 +1113,8 @@ python_install_dependencies() {
     return 1
   fi
 
-  run_cmd "$SELECTED_PROJECT/.venv/bin/python" -m pip install --upgrade pip
-  run_cmd "$SELECTED_PROJECT/.venv/bin/pip" install -r "$req_file"
+  run_as_app_user_shell "cd '$SELECTED_PROJECT' && .venv/bin/python -m pip install --upgrade pip"
+  run_as_app_user_shell "cd '$SELECTED_PROJECT' && .venv/bin/pip install -r '$req_file'"
   ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
 }
 
@@ -1036,9 +1196,7 @@ python_continuous_flow() {
   run_cmd rm -rf "$SELECTED_PROJECT/.venv"
 
   echo "3. Generando entorno virtual..."
-  ensure_command python3 python3
-  ensure_command pip3 python3-pip
-  run_cmd python3 -m venv "$SELECTED_PROJECT/.venv"
+  create_python_venv_with_pyenv "$SELECTED_PROJECT"
   ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
 
   echo "4. Instalando dependencias..."
@@ -1047,8 +1205,8 @@ python_continuous_flow() {
     read -r -p "Ruta del archivo de dependencias: " req_file
   fi
   if [[ -f "$req_file" ]]; then
-    run_cmd "$SELECTED_PROJECT/.venv/bin/python" -m pip install --upgrade pip
-    run_cmd "$SELECTED_PROJECT/.venv/bin/pip" install -r "$req_file"
+    run_as_app_user_shell "cd '$SELECTED_PROJECT' && .venv/bin/python -m pip install --upgrade pip"
+    run_as_app_user_shell "cd '$SELECTED_PROJECT' && .venv/bin/pip install -r '$req_file'"
     ensure_python_venv_executables "$SELECTED_PROJECT" || return 1
   else
     echo "No se instaló dependencias porque no existe el archivo: $req_file"
