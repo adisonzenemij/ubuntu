@@ -696,6 +696,151 @@ ensure_python_venv_executables() {
   fi
 }
 
+ensure_python_env_file() {
+  local project_dir="$1"
+  local env_file="$project_dir/.env"
+  local env_dist_file="$project_dir/.env.dist"
+
+  if [[ -f "$env_file" ]]; then
+    echo "Archivo .env existente: $env_file"
+    return 0
+  fi
+
+  if [[ -f "$env_dist_file" ]]; then
+    run_cmd cp "$env_dist_file" "$env_file"
+    echo "Archivo .env creado desde .env.dist."
+    return 0
+  fi
+
+  echo "No existe .env ni .env.dist en: $project_dir"
+  if ask_yes_no "¿Deseas crear un archivo .env vacio?"; then
+    run_cmd touch "$env_file"
+    return 0
+  fi
+
+  return 1
+}
+
+prompt_env_key_value() {
+  local key
+  local value
+
+  while true; do
+    read -r -p "Nombre de variable de entorno (ENTER para terminar): " key
+    key="${key// /}"
+    if [[ -z "$key" ]]; then
+      return 1
+    fi
+    if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      break
+    fi
+    echo "Nombre invalido. Usa letras, numeros y guion bajo; no puede iniciar con numero."
+  done
+
+  read -r -p "Valor para $key: " value
+  ENV_NEW_KEY="$key"
+  ENV_NEW_VALUE="$value"
+  return 0
+}
+
+add_env_variable() {
+  local env_file="$1"
+  local key="$2"
+  local value="$3"
+
+  printf '%s=%s\n' "$key" "$value" >> "$env_file"
+}
+
+secure_python_env_file() {
+  local env_file="$1"
+
+  if [[ -f "$env_file" ]]; then
+    run_cmd $SUDO_CMD chown "$APP_USER:$APP_USER" "$env_file" || true
+    run_cmd $SUDO_CMD chmod 640 "$env_file" || true
+  fi
+}
+
+edit_env_variables() {
+  local env_file="$1"
+  local tmp_file
+  local line
+  local key
+  local value
+  local new_value
+  local found_assignments=0
+
+  tmp_file="$(mktemp)"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^[[:space:]]*# || -z "${line// }" || "$line" != *"="* ]]; then
+      printf '%s\n' "$line" >> "$tmp_file"
+      continue
+    fi
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+
+    if ! [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      printf '%s\n' "$line" >> "$tmp_file"
+      continue
+    fi
+
+    found_assignments=1
+    echo
+    echo "Variable: $key"
+    if [[ -n "$value" ]]; then
+      echo "Valor actual: ********"
+    else
+      echo "Valor actual: (vacio)"
+    fi
+
+    if ask_yes_no "¿Deseas cambiar el valor de $key?"; then
+      read -r -p "Nuevo valor para $key: " new_value
+      printf '%s=%s\n' "$key" "$new_value" >> "$tmp_file"
+    else
+      printf '%s\n' "$line" >> "$tmp_file"
+    fi
+  done < "$env_file"
+
+  mv "$tmp_file" "$env_file"
+
+  if (( found_assignments == 0 )); then
+    echo "El archivo .env no contiene variables CLAVE=valor."
+  fi
+
+  while ask_yes_no "¿Deseas agregar una nueva variable de entorno?"; do
+    if prompt_env_key_value; then
+      add_env_variable "$env_file" "$ENV_NEW_KEY" "$ENV_NEW_VALUE"
+    else
+      break
+    fi
+  done
+}
+
+manage_python_env_file_for_project() {
+  local project_dir="$1"
+  local env_file="$project_dir/.env"
+
+  ensure_python_env_file "$project_dir" || return 1
+
+  if [[ -s "$env_file" ]]; then
+    if ask_yes_no "¿Desea realizar cambios en el archivo de variables de entorno?"; then
+      edit_env_variables "$env_file"
+    else
+      echo "Variables de entorno sin cambios."
+    fi
+  else
+    echo "El archivo .env esta vacio."
+    while prompt_env_key_value; do
+      add_env_variable "$env_file" "$ENV_NEW_KEY" "$ENV_NEW_VALUE"
+    done
+  fi
+
+  secure_python_env_file "$env_file"
+}
+
 python_service_name() {
   local project_name="$1"
   echo "app-python-$(slugify_service_name "$project_name")"
@@ -813,9 +958,16 @@ python_install_dependencies() {
 # ==============================================================================
 # Menú Python - Opción 6. Generar Enlace Simbólico / Servicio systemd
 # ==============================================================================
+python_manage_env_file() {
+  echo "----- Python - Variables de Entorno -----"
+  select_project || return 1
+  manage_python_env_file_for_project "$SELECTED_PROJECT"
+}
+
 python_generate_systemd() {
   echo "----- Python - Generar Enlace Simbólico / Servicio systemd -----"
   select_project || return 1
+  manage_python_env_file_for_project "$SELECTED_PROJECT" || return 1
   select_python_framework
   ask_python_port
   build_python_exec_command "$SELECTED_PROJECT" "$PY_FRAMEWORK" "$PY_PORT" || return 1
@@ -842,6 +994,7 @@ ExecStart=${PY_SYSTEMD_EXEC_START}
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-${SELECTED_PROJECT}/.env
 
 [Install]
 WantedBy=multi-user.target
@@ -862,6 +1015,7 @@ EOF_SERVICE
 python_continuous_flow() {
   echo "----- Python - Flujo Continuo Completo -----"
   select_project || return 1
+  manage_python_env_file_for_project "$SELECTED_PROJECT" || return 1
   select_python_framework
   ask_python_port
   build_python_exec_command "$SELECTED_PROJECT" "$PY_FRAMEWORK" "$PY_PORT" || return 1
@@ -911,6 +1065,7 @@ ExecStart=${PY_SYSTEMD_EXEC_START}
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-${SELECTED_PROJECT}/.env
 
 [Install]
 WantedBy=multi-user.target
@@ -1011,11 +1166,12 @@ show_python_menu() {
   echo "3. Eliminar Entorno"
   echo "4. Generar Entorno"
   echo "5. Instalar Dependencias"
-  echo "6. Generar Enlace Simbólico"
-  echo "7. Flujo Continuo Completo"
-  echo "8. Consultar Enlace Simbólico"
-  echo "9. Eliminar Enlace Simbólico"
-  echo "10. Consultar Servicio Desplegado"
+  echo "6. Variables de Entorno"
+  echo "7. Generar Enlace Simbólico"
+  echo "8. Flujo Continuo Completo"
+  echo "9. Consultar Enlace Simbólico"
+  echo "10. Eliminar Enlace Simbólico"
+  echo "11. Consultar Servicio Desplegado"
   echo "0. Volver"
   echo "=============================================="
 }
@@ -1032,11 +1188,12 @@ python_deploy_menu() {
       3) python_delete_venv; pause_menu ;;
       4) python_create_venv; pause_menu ;;
       5) python_install_dependencies; pause_menu ;;
-      6) python_generate_systemd; pause_menu ;;
-      7) python_continuous_flow; pause_menu ;;
-      8) python_show_systemd_symlink; pause_menu ;;
-      9) python_delete_systemd_symlink; pause_menu ;;
-      10) python_show_deployed_service; pause_menu ;;
+      6) python_manage_env_file; pause_menu ;;
+      7) python_generate_systemd; pause_menu ;;
+      8) python_continuous_flow; pause_menu ;;
+      9) python_show_systemd_symlink; pause_menu ;;
+      10) python_delete_systemd_symlink; pause_menu ;;
+      11) python_show_deployed_service; pause_menu ;;
       0) return 0 ;;
       *) echo "Opción no válida."; pause_menu ;;
     esac
