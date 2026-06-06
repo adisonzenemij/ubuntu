@@ -851,8 +851,12 @@ ensure_python_venv_executables() {
   fi
 
   if ! run_as_app_user "$venv_dir/bin/python" --version >/dev/null 2>&1; then
+  if ! run_as_app_user "$venv_dir/bin/python" --version >/dev/null 2>&1; then
     echo "ERROR: El usuario del servicio '$APP_USER' no pudo ejecutar $venv_dir/bin/python."
     echo "Revisa permisos del proyecto, del entorno virtual o si la ruta esta montada con noexec."
+    echo "Diagnostico sugerido:"
+    echo "  namei -l $venv_dir/bin/python"
+    echo "  findmnt -T $venv_dir/bin/python -o TARGET,OPTIONS"
     echo "Diagnostico sugerido:"
     echo "  namei -l $venv_dir/bin/python"
     echo "  findmnt -T $venv_dir/bin/python -o TARGET,OPTIONS"
